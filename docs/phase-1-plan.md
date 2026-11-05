@@ -1183,7 +1183,7 @@ scope in Rev 2.
 | Relational integrity | RI1–RI9 | Defined in Rev 2.1 #5 (one raw-SQL violation per constraint, plus a positive case). Renamed from R1–R9; see section 22. |
 | Reproducibility | V1–V6 | Defined in Rev 2.1 #6. |
 | Blobs | B1–B8 | Defined in Rev 2.1 #7. |
-| Actor and authorship | A1–A5 | Defined in Rev 2.1 #8. |
+| Actor and authorship | A1–A5 | Defined in Rev 2.1 #8; written out in section 17.4.3. |
 | Jobs | J1–J10 (J4a–c, J5a–c) | Defined in Rev 2.1 and Rev 2.2 #5. |
 | Extensions | E1–E11 | Defined in Rev 2. |
 | Backup | C1–C10 | Defined in Rev 2, reconciled in Rev 2.1. |
@@ -1259,6 +1259,31 @@ the plan was consolidated, and are recorded here unchanged in substance.
 Milestone placement follows section 16.2: G2 and G3 in M1. G1 applies from
 M1 onward as the harness runs every test as the real roles. G5 is in M6. The
 record assigns G4 to no milestone.
+
+#### 17.4.3 Actor and authorship tests A1–A5 (Rev 2.1 #8)
+
+Revision 2.1 #8 defined these. They were referenced but not written out when
+the plan was consolidated, and are recorded here unchanged in substance.
+**Pending confirmation:** this transcription has not yet been confirmed.
+
+| Test | Asserts (Rev 2.1 #8) | Milestone (section 16.2) |
+|---|---|---|
+| A1 | Extends the route-driven audit-completeness test: for every command, every row that carries the command's `audit_event_id`, or was created in its transaction, has `created_by` equal to the event's actor. | M13 |
+| A2 | Freeze end to end: the `frozen` event has actor `system:worker`, `on_behalf_of` the requester, and causation set to the request event; `dataset_versions.frozen_by` is the requester and `created_by` on the member-check rows is `system:worker`. | M13 |
+| A3 | The CHECK rejects `on_behalf_of` with a non-system actor. | M2 |
+| A4 | A job event with no `causation_event_id` is rejected. | M2 |
+| A5 | 100 denied requests within one window produce one event with a repeat count of 100, and there are no UPDATEs on `audit_events` (Rev 2.1 suggested checking `pg_stat_user_tables.n_tup_upd = 0`). | M2 |
+
+**Conflict to resolve (A4):** Revision 2.1 worded A4 for every job event.
+Revision 2.2 #3 (section 8.2, JA6) later made *periodic* job events carry no
+causation at all. Read literally, A4 contradicts an approved constraint. A
+consistent reading is "a *command-triggered* job event with no
+`causation_event_id` is rejected", which JA5 already covers. This needs
+confirmation; it is not decided here.
+
+**A5 measurement note:** `pg_stat_user_tables` counters are updated
+asynchronously, so `n_tup_upd = 0` can pass vacuously. M2 (#7) instead relies
+on the append-only triggers, which make any UPDATE fail the write itself.
 
 ---
 
@@ -1346,6 +1371,7 @@ record assigns G4 to no milestone.
 | X5 | Whether any optional item (O3–O7, partial-success batches) enters Phase 1 | After M14 |
 | X6 | Local S3 emulator for O3 | O3 only |
 | X7 | Formal sign-off of the MPL-2.0 licence (U1) | Before any distribution |
+| X8 | A4 wording conflicts with JA6 for periodic jobs (section 17.4.3); confirm the command-triggered reading or another | Before A4 is reported as satisfied |
 
 ---
 
