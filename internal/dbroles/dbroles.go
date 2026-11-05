@@ -67,6 +67,14 @@ var Grants = []Grant{
 	{Role: App, Table: "idempotency_keys", Privilege: "SELECT"},
 	{Role: App, Table: "idempotency_keys", Privilege: "INSERT"},
 
+	// audit_events (plan 6.3): every mutating row is "I audit_events"; the
+	// audit query is "S audit_events". Append-only: no role holds UPDATE or
+	// DELETE, and a trigger rejects them for everyone.
+	{Role: App, Table: "audit_events", Privilege: "SELECT"},
+	{Role: App, Table: "audit_events", Privilege: "INSERT"},
+	{Role: Worker, Table: "audit_events", Privilege: "INSERT"},
+	{Role: ReadOnly, Table: "audit_events", Privilege: "SELECT"},
+
 	// studio_worker: idempotency.sweep is S(expires_at), D.
 	{Role: Worker, Table: "idempotency_keys", Privilege: "SELECT", Columns: []string{"expires_at"}},
 	{Role: Worker, Table: "idempotency_keys", Privilege: "DELETE"},

@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/app"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/config"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/db"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/health"
@@ -59,6 +60,15 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 		}
 		lc.OnShutdown("database pool", func(context.Context) error { pool.Close(); return nil })
 		checks = append(checks, db.PingChecker{Pool: pool})
+
+		// Denied and failed events are aggregated in memory and flushed per
+		// window (plan 8.3). Registered after the pool, so its hook runs
+		// before the pool closes and after HTTP has drained.
+		agg := audit.NewAggregator(pool, log, audit.Actions, audit.AggregatorConfig{})
+		go agg.Run()
+		lc.OnShutdown("audit aggregator flush", func(ctx context.Context) error {
+			return agg.Shutdown(ctx, true)
+		})
 	}
 	hs := health.New(log, cfg.ReadinessTimeout, checks...)
 	lc.OnDrain(hs.SetDraining)

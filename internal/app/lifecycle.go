@@ -5,10 +5,11 @@
 //  1. readiness flips to "draining" (load balancers stop sending traffic);
 //  2. the HTTP server stops accepting and drains in-flight requests;
 //  3. shutdown hooks run in reverse registration order (last started, first
-//     stopped). From M2 the audit aggregator's flush is registered here, after
-//     HTTP has drained, so it sees every event produced by in-flight requests.
+//     stopped). The audit aggregator's flush is registered here, after HTTP
+//     has drained, so it sees every event produced by in-flight requests.
 //
-// Every step shares the single ShutdownTimeout deadline.
+// Every step shares the single ShutdownTimeout deadline. Hooks always run,
+// even once the deadline has expired; they then receive the expired context.
 package app
 
 import (
@@ -123,11 +124,14 @@ func (l *Lifecycle) shutdown() error {
 			_ = srv.Close()
 		}
 	}
+	// Every hook runs, even after the deadline has expired (M0-F4, plan 8.3):
+	// a hook given an expired context must fail fast but can still do its
+	// non-blocking fallback, such as logging audit aggregates it could not
+	// flush. An overrun is reported as an error.
 	for i := len(hooks) - 1; i >= 0; i-- {
 		h := hooks[i]
 		if err := ctx.Err(); err != nil {
-			errs = append(errs, fmt.Errorf("hook %s skipped: %w", h.Name, err))
-			continue
+			errs = append(errs, fmt.Errorf("hook %s started after the shutdown deadline: %w", h.Name, err))
 		}
 		if err := h.Fn(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("hook %s: %w", h.Name, err))
