@@ -1,8 +1,10 @@
 //go:build integration
 
 // Package e2e runs the built binaries as real processes. It requires
-// STUDIO_BIN_DIR (set by `make test-integration`, which builds first) and
-// STUDIO_TEST_DATABASE_URL (the compose PostgreSQL).
+// STUDIO_BIN_DIR (set by `make test-integration`, which builds first) and the
+// internal/testdb environment. Since M1 the binaries connect as their own
+// login roles (studio_app, studio_worker) to a cloned test database; the
+// superuser is used only by the harness for setup and inspection.
 package e2e
 
 import (
@@ -21,7 +23,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/dbroles"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/testdb"
 )
+
+func TestMain(m *testing.M) { os.Exit(testdb.Main(m)) }
 
 func requireEnv(t *testing.T, key string) string {
 	t.Helper()
@@ -171,11 +178,12 @@ func waitHealthy(t *testing.T, base string) {
 }
 
 func TestAPIServesHealthReadinessAndShutsDownGracefully(t *testing.T) {
+	db := testdb.New(t)
 	addr := freeAddr(t)
 	base := "http://" + addr
 	p := start(t, "studio-api",
 		"STUDIO_HTTP_ADDR="+addr,
-		"STUDIO_DATABASE_URL="+requireEnv(t, "STUDIO_TEST_DATABASE_URL"),
+		"STUDIO_DATABASE_URL="+db.URL(dbroles.App),
 		"STUDIO_SHUTDOWN_TIMEOUT=10s",
 	)
 	waitHealthy(t, base)
@@ -191,6 +199,7 @@ func TestAPIServesHealthReadinessAndShutsDownGracefully(t *testing.T) {
 	if code != http.StatusOK || rep.Status != "ready" || rep.Checks["database"]["status"] != "ok" {
 		t.Fatalf("readyz = %d %s", code, body)
 	}
+	assertConnectedAs(t, db, "studio-api", dbroles.App)
 
 	code, hdr, body := httpGet(t, base+"/no-such-route")
 	if code != http.StatusNotFound || hdr.Get("Content-Type") != "application/problem+json" || hdr.Get("X-Request-ID") == "" {
@@ -212,7 +221,7 @@ func TestAPIServesHealthReadinessAndShutsDownGracefully(t *testing.T) {
 			t.Errorf("non-JSON log line: %s", line)
 		}
 	}
-	if pw := passwordOf(requireEnv(t, "STUDIO_TEST_DATABASE_URL")); pw != "" && strings.Contains(logs, pw) {
+	if pw := testdb.Passwords(t).App; strings.Contains(logs, pw) {
 		t.Error("logs contain the database password")
 	}
 }
@@ -247,8 +256,9 @@ func TestAPIRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestWorkerStartsAndShutsDownGracefully(t *testing.T) {
+	db := testdb.New(t)
 	p := start(t, "studio-worker",
-		"STUDIO_DATABASE_URL="+requireEnv(t, "STUDIO_TEST_DATABASE_URL"))
+		"STUDIO_DATABASE_URL="+db.URL(dbroles.Worker))
 	p.waitForLog(t, "worker idle", 10*time.Second)
 	if exit := p.stop(t, 15*time.Second); exit != 0 {
 		t.Fatalf("exit code %d", exit)
@@ -276,18 +286,28 @@ func TestStudioctlVersion(t *testing.T) {
 	}
 }
 
-func passwordOf(raw string) string {
-	at := strings.LastIndex(raw, "@")
-	scheme := strings.Index(raw, "://")
-	if at < 0 || scheme < 0 {
-		return ""
+// assertConnectedAs proves the process logged in as its own role, not the
+// superuser, by inspecting pg_stat_activity as the harness superuser.
+func assertConnectedAs(t *testing.T, db *testdb.DB, application, role string) {
+	t.Helper()
+	admin := db.Connect(t, testdb.Admin)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := admin.Query(ctx, `SELECT DISTINCT usename::text FROM pg_stat_activity
+		WHERE datname = current_database() AND application_name = $1`, application)
+	if err != nil {
+		t.Fatal(err)
 	}
-	userinfo := raw[scheme+3 : at]
-	if i := strings.Index(userinfo, ":"); i >= 0 {
-		pw := userinfo[i+1:]
-		if len(pw) >= 4 { // avoid false positives on trivially short strings
-			return pw
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			t.Fatal(err)
 		}
+		users = append(users, u)
 	}
-	return ""
+	if len(users) != 1 || users[0] != role {
+		t.Errorf("%s connected as %v, want only %s", application, users, role)
+	}
 }

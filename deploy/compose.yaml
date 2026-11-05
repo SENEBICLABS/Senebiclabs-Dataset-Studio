@@ -1,12 +1,10 @@
 # Local development only. Not a deployment artefact.
 #
-# M0 runs a single PostgreSQL 18 instance. The container's superuser
-# (studio_bootstrap) is used ONLY by the bootstrap step (M1) and by the test
-# harness. Until M1, that harness includes the E2E tests, which start
-# studio-api and studio-worker with this superuser URL because no
-# less-privileged role exists yet. Outside the tests, application processes
-# never connect with it. M1 adds the bootstrap SQL that creates the
-# per-component roles and moves the E2E tests onto them.
+# A single PostgreSQL 18 instance. The container's superuser
+# (studio_bootstrap) is used ONLY by `studioctl db bootstrap` and by the test
+# harness's setup; application processes never connect with it. The
+# per-component roles are created by deploy/bootstrap/roles.sql
+# (`make db-setup`).
 name: dataset-studio
 
 services:

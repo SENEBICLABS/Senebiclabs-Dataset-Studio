@@ -33,12 +33,26 @@ LDFLAGS := -s -w -X $(MODULE)/internal/version.Version=$(VERSION) -X $(MODULE)/i
 # Local settings. .env is plain KEY=value; created from .env.example by `make env`.
 # Values read from .env become make variables but are NOT exported globally:
 #   - docker compose reads .env itself (--env-file);
-#   - STUDIO_TEST_DATABASE_URL (bootstrap superuser credentials) is passed only
-#     to the test command in test-integration;
+#   - STUDIO_TEST_DATABASE_URL (bootstrap superuser credentials) and the
+#     STUDIO_DB_*_PASSWORD role passwords are passed only to the test command
+#     in test-integration and to db-setup;
 #   - application settings (APP_ENV_VARS) are passed only to run-api/run-worker.
 -include .env
 STUDIO_PG_PORT ?= 55432
 STUDIO_TEST_DATABASE_URL ?= postgres://studio_bootstrap:$(STUDIO_PG_BOOTSTRAP_PASSWORD)@127.0.0.1:$(STUDIO_PG_PORT)/studio?sslmode=disable
+
+# Login-role passwords (plan 6.1). Local placeholders; override them in .env.
+# They are passed only to `db-setup` and the integration test command.
+STUDIO_DB_MIGRATOR_PASSWORD ?= local-dev-only-migrator
+STUDIO_DB_APP_PASSWORD      ?= local-dev-only-app-role
+STUDIO_DB_WORKER_PASSWORD   ?= local-dev-only-worker
+STUDIO_DB_BACKUP_PASSWORD   ?= local-dev-only-backup
+STUDIO_DB_READONLY_PASSWORD ?= local-dev-only-readonly
+STUDIO_DB_NAME              ?= studio
+DB_PASSWORD_ENV = STUDIO_DB_MIGRATOR_PASSWORD='$(STUDIO_DB_MIGRATOR_PASSWORD)' \
+	STUDIO_DB_APP_PASSWORD='$(STUDIO_DB_APP_PASSWORD)' STUDIO_DB_WORKER_PASSWORD='$(STUDIO_DB_WORKER_PASSWORD)' \
+	STUDIO_DB_BACKUP_PASSWORD='$(STUDIO_DB_BACKUP_PASSWORD)' STUDIO_DB_READONLY_PASSWORD='$(STUDIO_DB_READONLY_PASSWORD)'
+PG_LOCAL_URL = postgres://$(1):$(2)@127.0.0.1:$(STUDIO_PG_PORT)/$(3)?sslmode=disable
 
 # Settings the binaries read. Only variables that are defined (in .env or the
 # calling environment) are passed, so unset ones keep the binaries' defaults.
@@ -94,6 +108,16 @@ down: ## Stop local services (data volume is kept)
 ps: ## Show local service status
 	$(COMPOSE) ps
 
+.PHONY: db-setup
+db-setup: build ## Bootstrap roles + database as superuser, then migrate as studio_migrator
+	@$(COMPOSE) ps --status running --services 2>/dev/null | grep -qx postgres || { echo "error: local PostgreSQL is not running; run 'make up' first" >&2; exit 1; }
+	@echo "studioctl db bootstrap  (STUDIO_BOOTSTRAP_DATABASE_URL=<redacted> STUDIO_DB_*_PASSWORD=<redacted>)"
+	@STUDIO_BOOTSTRAP_DATABASE_URL='$(call PG_LOCAL_URL,studio_bootstrap,$(STUDIO_PG_BOOTSTRAP_PASSWORD),postgres)' \
+	  STUDIO_DB_NAME='$(STUDIO_DB_NAME)' $(DB_PASSWORD_ENV) $(BIN_DIR)/studioctl db bootstrap
+	@echo "studioctl migrate  (STUDIO_MIGRATOR_DATABASE_URL=<redacted>)"
+	@STUDIO_MIGRATOR_DATABASE_URL='$(call PG_LOCAL_URL,studio_migrator,$(STUDIO_DB_MIGRATOR_PASSWORD),$(STUDIO_DB_NAME))' \
+	  $(BIN_DIR)/studioctl migrate
+
 .PHONY: db-destroy
 db-destroy: ## Stop services AND delete the local data volume (requires CONFIRM=yes)
 	@[[ "$(CONFIRM)" == "yes" ]] || { echo "refusing: this deletes the local database volume. Re-run with CONFIRM=yes" >&2; exit 1; }
@@ -137,9 +161,9 @@ build: toolchain-check ## Build all binaries into ./bin
 .PHONY: test-integration
 test-integration: build ## Integration + e2e tests (needs `make up`)
 	@$(COMPOSE) ps --status running --services 2>/dev/null | grep -qx postgres || { echo "error: local PostgreSQL is not running; run 'make up' first" >&2; exit 1; }
-	@echo "STUDIO_BIN_DIR=$(BIN_DIR) STUDIO_EXPECT_COMMIT=$(COMMIT) STUDIO_TEST_DATABASE_URL=<redacted> $(GO) test -race -count=1 -tags integration ./..."
+	@echo "STUDIO_BIN_DIR=$(BIN_DIR) STUDIO_EXPECT_COMMIT=$(COMMIT) STUDIO_TEST_DATABASE_URL=<redacted> STUDIO_DB_*_PASSWORD=<redacted> $(GO) test -race -count=1 -tags integration ./..."
 	@STUDIO_BIN_DIR='$(BIN_DIR)' STUDIO_EXPECT_COMMIT='$(COMMIT)' STUDIO_TEST_DATABASE_URL='$(STUDIO_TEST_DATABASE_URL)' \
-	  $(GO) test -race -count=1 -tags integration ./...
+	  $(DB_PASSWORD_ENV) $(GO) test -race -count=1 -tags integration ./...
 
 .PHONY: check
 check: toolchain-check tidy-check fmt-check vet lint vuln test build test-integration ## Full M0 gate

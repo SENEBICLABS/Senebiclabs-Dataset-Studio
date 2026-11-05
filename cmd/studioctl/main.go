@@ -1,15 +1,18 @@
 // Command studioctl is the operator CLI.
 //
-// M0 subcommands: version, config check. Database, backup and restore
-// subcommands arrive with their milestones.
+// Subcommands: version, config check (M0); db bootstrap, migrate (M1).
+// Backup and restore subcommands arrive with their milestones.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/config"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/version"
@@ -21,14 +24,25 @@ Usage:
   studioctl version          print build information as JSON
   studioctl config check     validate STUDIO_* environment variables and
                              print the effective configuration (secrets redacted)
+  studioctl db bootstrap     superuser-only: create the six database roles and
+                             the application database (needs
+                             STUDIO_BOOTSTRAP_DATABASE_URL and STUDIO_DB_*_PASSWORD)
+  studioctl migrate [up]     as studio_migrator: apply migrations, then grants
+                             (needs STUDIO_MIGRATOR_DATABASE_URL)
+  studioctl migrate status   print the current and latest migration versions
   studioctl help             show this help
+
+Exit codes: 0 success, 1 failure, 2 usage error.
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
-func run(args []string, lookup config.Lookup, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, lookup config.Lookup, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprint(stderr, usage)
 		return 2
@@ -47,6 +61,14 @@ func run(args []string, lookup config.Lookup, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return printSummary(stdout, cfg.Summary())
+	case "db":
+		if len(args) != 2 || args[1] != "bootstrap" {
+			_, _ = fmt.Fprint(stderr, usage)
+			return 2
+		}
+		return runDBBootstrap(ctx, lookup, stdout, stderr)
+	case "migrate":
+		return runMigrate(ctx, args[1:], lookup, stdout, stderr)
 	case "help", "-h", "--help":
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0
