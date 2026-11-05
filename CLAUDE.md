@@ -203,14 +203,12 @@ wait for Godwin when any of these applies:
 - **An Unresolved decision**
   ([plan section 20.3](docs/phase-1-plan.md#203-unresolved-decide-before-the-named-milestone),
   X1–X7) blocks the work. Never resolve one by inference.
-  - **X2 specifically:** the P3a–P3d, AG1–AG4 and JA1–JA9 entries in
+  - X2 is resolved. The P3a–P3d, AG1–AG4 and JA1–JA9 definitions are
+    confirmed in
     [plan section 17.4](docs/phase-1-plan.md#174-per-correction-test-identifiers-rev-21-and-rev-22)
-    are *derived proposals pending confirmation*, not approved definitions.
-  - Still implement and test the **approved** constraints behind them
-    (sections 7.1, 8.2 and 8.3).
-  - Do not invent definitions for those ids.
-  - Do not report them as satisfied until Godwin confirms the definitions.
-    Mark them "pending X2" in the PR.
+    (subsection 17.4.1).
+  - They are test definitions only. The architectural constraints remain those
+    in plan sections 7.1, 8.2 and 8.3.
 - **The work needs a new architectural decision**, or contradicts the plan.
 - **A security-critical point is ambiguous:** credentials, grants, audit
   immutability, rights evaluation, redaction, backup consistency or
