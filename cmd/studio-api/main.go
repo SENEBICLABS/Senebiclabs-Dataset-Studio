@@ -1,7 +1,8 @@
 // Command studio-api serves the Dataset Studio HTTP API.
 //
-// M0 scope: configuration, structured logging, /healthz, /readyz, RFC 9457
-// error responses, request IDs and graceful shutdown. No domain endpoints.
+// It serves /healthz and /readyz, and, with a database configured, the
+// routes assembled by internal/api (authentication from M3; authorization and
+// user, service-account and API-key administration from M4).
 package main
 
 import (
@@ -15,9 +16,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/api"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/app"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
-	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/auth"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/config"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/db"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/health"
@@ -53,7 +54,7 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 	lc := app.New(log, cfg.ShutdownTimeout)
 
 	var checks []health.Checker
-	var authHandler *auth.Handler
+	var routes []httpx.Route
 	if cfg.DatabaseURL != "" {
 		pool, err := db.Open(ctx, cfg.DatabaseURL, component)
 		if err != nil {
@@ -72,28 +73,24 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 			return agg.Shutdown(ctx, true)
 		})
 
-		// Authentication (M3): login, logout and /v1/me. Failed logins go to
-		// the aggregator; the HMAC key is required by config.Load.
-		authHandler = auth.NewHandler(auth.NewService(pool, auth.Config{
-			HMACKey: []byte(cfg.AuditHMACKey), IdleTimeout: cfg.SessionIdleTimeout, Failures: agg,
-		}), log)
+		// Authentication (M3) and authorization with user, service-account
+		// and API-key administration (M4). Failed logins and denied requests
+		// go to the aggregator; the HMAC key is required by config.Load.
+		routes = api.Routes(pool, agg, log, api.Config{
+			HMACKey: []byte(cfg.AuditHMACKey), IdleTimeout: cfg.SessionIdleTimeout,
+		})
 	}
 	hs := health.New(log, cfg.ReadinessTimeout, checks...)
 	lc.OnDrain(hs.SetDraining)
 
-	mux := http.NewServeMux()
-	hs.Register(mux)
-	if authHandler != nil {
-		authHandler.Register(mux)
+	handler, err := api.Handler(log, append(hs.Routes(), routes...))
+	if err != nil {
+		log.Error("routes", slog.String("error", err.Error()))
+		return 1
 	}
-	mux.Handle("/", httpx.NotFound())
 
 	srv := &http.Server{
-		Handler: httpx.Chain(mux,
-			httpx.RequestID(),
-			httpx.AccessLog(log),
-			httpx.Recover(log),
-		),
+		Handler:           handler,
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,

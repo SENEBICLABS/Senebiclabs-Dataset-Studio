@@ -53,15 +53,23 @@ var SchemaUsage = []string{App, Worker, ReadOnly}
 var Grants = []Grant{
 	// studio_app: "every authenticated request" reads principals(id, kind,
 	// status); user and service-account administration inserts principals and
-	// updates their status.
+	// updates their status. handle stays unreadable (G2 asserts it).
 	{Role: App, Table: "principals", Privilege: "SELECT", Columns: []string{"id", "kind", "status"}},
 	{Role: App, Table: "principals", Privilege: "INSERT"},
 	{Role: App, Table: "principals", Privilege: "UPDATE", Columns: []string{"status"}},
 	// studio_app: auth/login reads users(principal_id, email, password_hash);
-	// the matrix's "status" is principals.status, granted above.
-	{Role: App, Table: "users", Privilege: "SELECT", Columns: []string{"principal_id", "email", "password_hash"}},
+	// the matrix's "status" is principals.status, granted above. From M4,
+	// every authenticated request reads global_role (the authorization
+	// input), and the user administration reads (GET /v1/users) read
+	// display_name and created_at.
+	{Role: App, Table: "users", Privilege: "SELECT", Columns: []string{
+		"principal_id", "email", "password_hash", "global_role", "display_name", "created_at",
+	}},
 	{Role: App, Table: "users", Privilege: "INSERT"},
 	{Role: App, Table: "users", Privilege: "UPDATE", Columns: []string{"display_name", "global_role", "password_hash"}},
+	// service_accounts holds no credentials; its global_role is read on every
+	// API-key request and the whole row by GET /v1/service-accounts (M4).
+	{Role: App, Table: "service_accounts", Privilege: "SELECT"},
 	{Role: App, Table: "service_accounts", Privilege: "INSERT"},
 	// studio_app: S/I idempotency_keys on POST.
 	{Role: App, Table: "idempotency_keys", Privilege: "SELECT"},

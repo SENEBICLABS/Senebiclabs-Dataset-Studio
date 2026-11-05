@@ -14,6 +14,7 @@ import (
 
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/auth/authdb"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/authz"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/principals"
 )
 
@@ -51,11 +52,21 @@ const (
 
 // Principal is the authenticated caller.
 type Principal struct {
-	ID        uuid.UUID
-	Kind      audit.ActorKind
-	Method    Method
-	SessionID uuid.UUID // set for MethodSession
-	APIKeyID  uuid.UUID // set for MethodAPIKey
+	ID         uuid.UUID
+	Kind       audit.ActorKind
+	GlobalRole authz.GlobalRole
+	Method     Method
+	SessionID  uuid.UUID // set for MethodSession
+	APIKeyID   uuid.UUID // set for MethodAPIKey
+}
+
+// Subject returns the caller as the subject of an authorization decision.
+// Every Phase 1 principal holds the single installation scope (plan 2.2).
+func (p Principal) Subject() authz.Principal {
+	return authz.Principal{
+		ID: p.ID, Kind: p.Kind, GlobalRole: p.GlobalRole, AuthMethod: string(p.Method),
+		Scopes: []authz.Scope{authz.InstallationScope},
+	}
 }
 
 // DB is what the service needs from a pool: queries plus transactions.
@@ -145,6 +156,30 @@ type LoginResult struct {
 }
 
 func normaliseEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
+
+// ValidateEmail normalises an email address (trimmed, lower case) and checks
+// its shape. Errors wrap ErrInvalidInput.
+func ValidateEmail(e string) (string, error) {
+	email := normaliseEmail(e)
+	if len(email) < 3 || len(email) > 254 || !strings.Contains(email, "@") || strings.ContainsAny(email, " \t\r\n") {
+		return "", fmt.Errorf("%w: email must be a single address of at most 254 characters", ErrInvalidInput)
+	}
+	return email, nil
+}
+
+// ValidateDisplayName trims a display name and checks its length. Errors wrap
+// ErrInvalidInput.
+func ValidateDisplayName(n string) (string, error) {
+	name := strings.TrimSpace(n)
+	if name == "" || len(name) > 200 {
+		return "", fmt.Errorf("%w: display name must be 1-200 characters", ErrInvalidInput)
+	}
+	return name, nil
+}
+
+// UserHandle is the principals.handle of a user: "user:" plus the normalised
+// email.
+func UserHandle(email string) string { return "user:" + email }
 
 // Login verifies a password and opens a session. Every refusal other than
 // rate limiting returns ErrInvalidCredentials, whatever the cause, and every
@@ -272,7 +307,8 @@ func (s *Service) Authenticate(ctx context.Context, bearer string) (Principal, e
 	if err := s.q.TouchSession(ctx, authdb.TouchSessionParams{Now: now, ID: row.ID}); err != nil {
 		return Principal{}, fmt.Errorf("auth: touch session: %w", err)
 	}
-	return Principal{ID: row.PrincipalID, Kind: audit.User, Method: MethodSession, SessionID: row.ID}, nil
+	return Principal{ID: row.PrincipalID, Kind: audit.User, GlobalRole: authz.GlobalRole(row.GlobalRole),
+		Method: MethodSession, SessionID: row.ID}, nil
 }
 
 func (s *Service) authenticateAPIKey(ctx context.Context, key string, now time.Time) (Principal, error) {
@@ -295,7 +331,8 @@ func (s *Service) authenticateAPIKey(ctx context.Context, key string, now time.T
 	if kind != audit.User && kind != audit.ServiceAccount {
 		return Principal{}, ErrUnauthenticated
 	}
-	return Principal{ID: row.PrincipalID, Kind: kind, Method: MethodAPIKey, APIKeyID: row.ID}, nil
+	return Principal{ID: row.PrincipalID, Kind: kind, GlobalRole: authz.GlobalRole(row.GlobalRole),
+		Method: MethodAPIKey, APIKeyID: row.ID}, nil
 }
 
 // Logout revokes the caller's session.
@@ -330,9 +367,9 @@ type IssuedAPIKey struct {
 	ExpiresAt time.Time
 }
 
-// IssueAPIKey creates an API key for principalID on behalf of actor. Whether
-// actor may do so is an authorization decision (M4); this method only
-// authenticates and records it.
+// IssueAPIKey creates an API key for principalID on behalf of actor. It does
+// not authorize: callers check the permission first (the M4 administration
+// service checks ManageUsers before calling it).
 func (s *Service) IssueAPIKey(ctx context.Context, actor Principal, principalID uuid.UUID, expiresAt time.Time, requestID string) (IssuedAPIKey, error) {
 	now := s.nowUTC()
 	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
@@ -378,7 +415,8 @@ func (s *Service) IssueAPIKey(ctx context.Context, actor Principal, principalID 
 	return IssuedAPIKey{ID: id, Key: key, Prefix: prefix, ExpiresAt: expiresAt}, nil
 }
 
-// RevokeAPIKey permanently revokes a key on behalf of actor.
+// RevokeAPIKey permanently revokes a key on behalf of actor. Like
+// IssueAPIKey, it does not authorize; callers check first.
 func (s *Service) RevokeAPIKey(ctx context.Context, actor Principal, keyID uuid.UUID, requestID string) error {
 	now := s.nowUTC()
 	return s.inTx(ctx, func(tx pgx.Tx, q *authdb.Queries) error {
@@ -409,13 +447,13 @@ type AdminInput struct {
 // (plan 14: the first admin is created only through studioctl; plan 7.2:
 // created_by and the audit actor are system:cli).
 func (s *Service) CreateAdmin(ctx context.Context, in AdminInput) (uuid.UUID, error) {
-	email := normaliseEmail(in.Email)
-	if len(email) < 3 || len(email) > 254 || !strings.Contains(email, "@") || strings.ContainsAny(email, " \t\r\n") {
-		return uuid.Nil, fmt.Errorf("%w: email must be a single address of at most 254 characters", ErrInvalidInput)
+	email, err := ValidateEmail(in.Email)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	name := strings.TrimSpace(in.DisplayName)
-	if name == "" || len(name) > 200 {
-		return uuid.Nil, fmt.Errorf("%w: display name must be 1-200 characters", ErrInvalidInput)
+	name, err := ValidateDisplayName(in.DisplayName)
+	if err != nil {
+		return uuid.Nil, err
 	}
 	if err := ValidatePassword(in.Password); err != nil {
 		return uuid.Nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
@@ -432,7 +470,7 @@ func (s *Service) CreateAdmin(ctx context.Context, in AdminInput) (uuid.UUID, er
 	const role = "platform_admin"
 	err = s.inTx(ctx, func(tx pgx.Tx, q *authdb.Queries) error {
 		if err := q.CreatePrincipal(ctx, authdb.CreatePrincipalParams{
-			ID: id, Kind: authdb.StudioActorKindUser, Handle: "user:" + email, CreatedBy: cli,
+			ID: id, Kind: authdb.StudioActorKindUser, Handle: UserHandle(email), CreatedBy: cli,
 		}); err != nil {
 			return fmt.Errorf("auth: create principal: %w", err)
 		}

@@ -123,9 +123,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 }
 
 const getAPIKeyByPrefix = `-- name: GetAPIKeyByPrefix :one
-SELECT k.id, k.principal_id, k.key_hash, k.expires_at, k.revoked_at, p.kind, p.status
+SELECT k.id, k.principal_id, k.key_hash, k.expires_at, k.revoked_at, p.kind, p.status,
+       COALESCE(u.global_role, sa.global_role, '')::text AS global_role
 FROM studio.api_keys k
 JOIN studio.principals p ON p.id = k.principal_id
+LEFT JOIN studio.users u ON u.principal_id = k.principal_id
+LEFT JOIN studio.service_accounts sa ON sa.principal_id = k.principal_id
 WHERE k.prefix = $1
 `
 
@@ -137,8 +140,11 @@ type GetAPIKeyByPrefixRow struct {
 	RevokedAt   *time.Time
 	Kind        StudioActorKind
 	Status      string
+	GlobalRole  string
 }
 
+// A key belongs to a user or a service account; the global role comes from
+// whichever of the two rows exists.
 func (q *Queries) GetAPIKeyByPrefix(ctx context.Context, prefix string) (GetAPIKeyByPrefixRow, error) {
 	row := q.db.QueryRow(ctx, getAPIKeyByPrefix, prefix)
 	var i GetAPIKeyByPrefixRow
@@ -150,6 +156,7 @@ func (q *Queries) GetAPIKeyByPrefix(ctx context.Context, prefix string) (GetAPIK
 		&i.RevokedAt,
 		&i.Kind,
 		&i.Status,
+		&i.GlobalRole,
 	)
 	return i, err
 }
@@ -196,9 +203,11 @@ func (q *Queries) GetPrincipalForKey(ctx context.Context, id uuid.UUID) (GetPrin
 }
 
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
-SELECT s.id, s.principal_id, s.expires_at, s.last_seen_at, s.revoked_at, p.kind, p.status
+SELECT s.id, s.principal_id, s.expires_at, s.last_seen_at, s.revoked_at, p.kind, p.status,
+       u.global_role
 FROM studio.sessions s
 JOIN studio.principals p ON p.id = s.principal_id
+JOIN studio.users u ON u.principal_id = s.principal_id
 WHERE s.token_hash = $1
 `
 
@@ -210,8 +219,11 @@ type GetSessionByTokenHashRow struct {
 	RevokedAt   *time.Time
 	Kind        StudioActorKind
 	Status      string
+	GlobalRole  string
 }
 
+// The global role is read on every request, so a role change or a disabled
+// principal takes effect at once (M4).
 func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetSessionByTokenHashRow, error) {
 	row := q.db.QueryRow(ctx, getSessionByTokenHash, tokenHash)
 	var i GetSessionByTokenHashRow
@@ -223,6 +235,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (
 		&i.RevokedAt,
 		&i.Kind,
 		&i.Status,
+		&i.GlobalRole,
 	)
 	return i, err
 }

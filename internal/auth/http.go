@@ -34,11 +34,14 @@ type Handler struct {
 // NewHandler returns HTTP handlers for svc.
 func NewHandler(svc *Service, log *slog.Logger) *Handler { return &Handler{svc: svc, log: log} }
 
-// Register mounts the endpoints on mux.
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/auth/login", h.login)
-	mux.Handle("POST /v1/auth/logout", h.RequireAuth(http.HandlerFunc(h.logout)))
-	mux.Handle("GET /v1/me", h.RequireAuth(http.HandlerFunc(h.me)))
+// Routes lists the endpoints (plan 15: Auth). Login is public; logout and
+// /v1/me need only an authenticated caller and act on the caller itself.
+func (h *Handler) Routes() []httpx.Route {
+	return []httpx.Route{
+		{Method: http.MethodPost, Path: "/v1/auth/login", Handler: http.HandlerFunc(h.login)},
+		{Method: http.MethodPost, Path: "/v1/auth/logout", Handler: h.RequireAuth(http.HandlerFunc(h.logout))},
+		{Method: http.MethodGet, Path: "/v1/me", Handler: h.RequireAuth(http.HandlerFunc(h.me))},
+	}
 }
 
 // unauthorized writes a 401 with a Bearer challenge. Unauthenticated requests
@@ -156,10 +159,12 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 type meResponse struct {
 	PrincipalID string `json:"principal_id"`
 	Kind        string `json:"kind"`
+	GlobalRole  string `json:"global_role"`
 	AuthMethod  string `json:"auth_method"`
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r.Context())
-	httpx.WriteJSON(w, http.StatusOK, meResponse{PrincipalID: p.ID.String(), Kind: string(p.Kind), AuthMethod: string(p.Method)})
+	httpx.WriteJSON(w, http.StatusOK, meResponse{PrincipalID: p.ID.String(), Kind: string(p.Kind),
+		GlobalRole: string(p.GlobalRole), AuthMethod: string(p.Method)})
 }
