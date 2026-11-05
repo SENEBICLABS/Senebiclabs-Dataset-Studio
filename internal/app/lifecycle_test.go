@@ -54,10 +54,18 @@ func TestHookErrorsAreReturnedAndLaterHooksStillRun(t *testing.T) {
 	}
 }
 
-func TestDeadlineSharedAcrossHooks(t *testing.T) {
+// M0-F4 (plan 8.3): a hook that comes after the deadline has expired still
+// runs, receives the expired context so it can fail fast into its fallback,
+// and the overrun is reported. The deadline itself is still enforced.
+func TestHooksStillRunAfterDeadlineWithExpiredContext(t *testing.T) {
 	lc := New(quiet(), 50*time.Millisecond)
-	skipped := true
-	lc.OnShutdown("never", func(context.Context) error { skipped = false; return nil })
+	var lateRan bool
+	var lateCtxErr error
+	lc.OnShutdown("late", func(ctx context.Context) error {
+		lateRan = true
+		lateCtxErr = ctx.Err()
+		return nil
+	})
 	lc.OnShutdown("slow", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() })
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -67,11 +75,14 @@ func TestDeadlineSharedAcrossHooks(t *testing.T) {
 	if time.Since(start) > time.Second {
 		t.Error("shutdown exceeded deadline")
 	}
-	if err == nil || !strings.Contains(err.Error(), "hook never skipped") {
-		t.Errorf("err = %v", err)
+	if !lateRan {
+		t.Fatal("hook registered before the slow one was not run after the deadline expired")
 	}
-	if !skipped {
-		t.Error("hook ran after deadline expired")
+	if !errors.Is(lateCtxErr, context.DeadlineExceeded) {
+		t.Errorf("late hook saw ctx error %v, want DeadlineExceeded", lateCtxErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "hook late started after the shutdown deadline") {
+		t.Errorf("overrun not reported: %v", err)
 	}
 }
 

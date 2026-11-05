@@ -5,8 +5,9 @@ neutral about specialty and about dataset type: dataset kinds, record schemas,
 vocabularies, validation rules and review profiles are versioned registry
 content, not code.
 
-**Status:** Phase 1, milestone M1 (database foundation: roles, migrations,
-grants as code, system principals). There are no domain features yet. The
+**Status:** Phase 1, milestone M2 (audit core: append-only audit events,
+action catalog, denied-event aggregation), built on M1's database foundation.
+There are no domain features yet. The
 architectural source of truth is [docs/phase-1-plan.md](docs/phase-1-plan.md).
 
 - Go modular monolith with three binaries: `studio-api`, `studio-worker`, `studioctl`
