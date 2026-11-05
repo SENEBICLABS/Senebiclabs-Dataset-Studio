@@ -25,9 +25,15 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env file (and local variants such as .env.local); the template is kept
 .env
+.env.*
+!.env.example
 
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Dataset Studio local outputs
+/bin/
+/.tools/

@@ -1,0 +1,38 @@
+# Local development only. Not a deployment artefact.
+#
+# M0 runs a single PostgreSQL 18 instance. The container's superuser
+# (studio_bootstrap) is used ONLY by the bootstrap step (M1) and by the test
+# harness. Until M1, that harness includes the E2E tests, which start
+# studio-api and studio-worker with this superuser URL because no
+# less-privileged role exists yet. Outside the tests, application processes
+# never connect with it. M1 adds the bootstrap SQL that creates the
+# per-component roles and moves the E2E tests onto them.
+name: dataset-studio
+
+services:
+  postgres:
+    # Pinned by multi-arch index digest; bump tag and digest together.
+    image: postgres:18.6-trixie@sha256:f4b419e350fd98d4a8429603295208976dea4c8fb8326d818d346d3e29f1db6f
+    environment:
+      POSTGRES_USER: studio_bootstrap
+      POSTGRES_PASSWORD: ${STUDIO_PG_BOOTSTRAP_PASSWORD:?set STUDIO_PG_BOOTSTRAP_PASSWORD in .env}
+      POSTGRES_DB: studio
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --data-checksums
+    ports:
+      # Loopback only. 55432 avoids clashing with a host PostgreSQL on 5432.
+      - "127.0.0.1:${STUDIO_PG_PORT:-55432}:5432"
+    volumes:
+      # The PostgreSQL 18 images keep data under /var/lib/postgresql/18/docker
+      # and declare /var/lib/postgresql as the volume.
+      - pgdata:/var/lib/postgresql
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio_bootstrap -d studio -h 127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
