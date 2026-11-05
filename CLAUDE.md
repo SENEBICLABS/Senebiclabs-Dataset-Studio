@@ -80,8 +80,9 @@ The plan holds the detail. This list is the minimum that always applies.
 - Use only the roles and grants in
   [plan section 6](docs/phase-1-plan.md#6-database-identities-and-permissions).
   Grants are code (`internal/dbroles`), and the drift test must stay green.
-- No application process connects as the bootstrap superuser. The only
-  exception is the documented E2E harness until M1 replaces it.
+- No application process connects as the bootstrap superuser. Since M1 the
+  E2E tests also run the binaries as their own roles; the superuser is used
+  only by `studioctl db bootstrap` and the test harness's setup.
 - Immutability, root-principal, actor-kind and composite-key rules are enforced
   **in the database** (constraints and triggers), not only in Go.
 

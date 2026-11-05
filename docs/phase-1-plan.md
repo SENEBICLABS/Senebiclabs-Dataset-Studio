@@ -144,8 +144,9 @@ pin time.
 | Go toolchain | `go 1.27.0`, `toolchain go1.27.3` | 1.27.3 | River and goose need Go 1.26 or later. |
 | PostgreSQL | `postgres:18.6-trixie`, pinned by digest | 18.6, `sha256:f4b419e350fd98d4a8429603295208976dea4c8fb8326d818d346d3e29f1db6f` | 19 was only at rc1 when pinned. Version 18 provides `uuidv7()`, `pg_read_all_data` and MAINTAIN (17 and later). |
 | Driver | `github.com/jackc/pgx/v5` | v5.11.0 | River 0.49 and goose 3.29 also require v5.11.0. |
-| Indirect, security pin | `golang.org/x/text` | v0.41.0 | Fixes GO-2026-6629 and GO-2026-5970, reached through pgx. Pinned in M0. |
-| Indirect, required by the line above | `golang.org/x/sync` | v0.22.0 | Raised automatically by x/text v0.41.0's go.mod. |
+| Indirect, security pin | `golang.org/x/text` | v0.43.0 | Pinned at v0.41.0 in M0 to fix GO-2026-6629 and GO-2026-5970 (reached through pgx). Raised to v0.43.0 in M1 because goose v3.29.0's go.mod requires it. |
+| Indirect | `golang.org/x/sync` | v0.24.0 | v0.22.0 in M0 (required by x/text v0.41.0). Raised to v0.24.0 in M1 because goose v3.29.0 requires it. |
+| Indirect | `github.com/jackc/puddle/v2` | v2.2.3 | pgx's pool dependency. Raised from v2.2.2 in M1 because goose v3.29.0 requires it. |
 | Migrations | `github.com/pressly/goose/v3`, SQL files embedded in the binary, forward-only | v3.29.0 | |
 | Job queue | River `github.com/riverqueue/river` and `riverdriver/riverpgxv5` | v0.49.0 | MPL-2.0, pre-1.0. Wrapped behind `internal/jobs.Queue`. River's SQL is carried in our own goose migrations. |
 | Query generation | `github.com/sqlc-dev/sqlc`, through a `tool` directive in a separate `tools/go.mod` | v1.31.1 | Generated code is committed. |
@@ -1178,7 +1179,7 @@ scope in Rev 2.
 | Aggregation | AG1–AG4 | **Confirmed (X2).** Defined below. |
 | Freeze | F1–F8 | Defined in Rev 2.1 #2. |
 | Status rules | D1–D7 | Defined in Rev 2.1 #3. |
-| Grants | G1–G5 | Defined in Rev 2.1 #4. |
+| Grants | G1–G5 | Defined in Rev 2.1 #4; written out in section 17.4.2. |
 | Relational integrity | RI1–RI9 | Defined in Rev 2.1 #5 (one raw-SQL violation per constraint, plus a positive case). Renamed from R1–R9; see section 22. |
 | Reproducibility | V1–V6 | Defined in Rev 2.1 #6. |
 | Blobs | B1–B8 | Defined in Rev 2.1 #7. |
@@ -1240,6 +1241,24 @@ rejected.
 | JA7 | Causation foreign key `(causation_event_id, causation_outcome) → audit_events(id, outcome)`, with `causation_outcome = 'succeeded'` | A causation pointing to a nonexistent event, or to a `denied` or `failed` event. |
 | JA8 | The causation insert trigger | Three sub-cases, each must fail: the causing event's `details.enqueued_jobs` does not contain this `job_id`; the causing event did not occur earlier; `on_behalf_of` is not inherited from the causing event. |
 | JA9 | Unique index on `job_id` where `action_class = 'job_execution'` | A second `job_execution` event for the same `job_id`. |
+
+#### 17.4.2 Grant tests G1–G5 (Rev 2.1 #4)
+
+Revision 2.1 #4 defined these. They were referenced but not written out when
+the plan was consolidated, and are recorded here unchanged in substance.
+**Pending confirmation:** this transcription has not yet been confirmed.
+
+| Test | Asserts |
+|---|---|
+| G1 | The whole test suite runs against the **real roles** with only the generated grants. Any missing privilege surfaces as `permission denied`. |
+| G2 | A forbidden-operations suite: for each role, each operation withheld from it in sections 6.1 and 6.3 fails. |
+| G3 | A grant-drift test: the live catalog equals the grants map in `internal/dbroles`. |
+| G4 | `make privilege-audit`, which is slow and not part of `make check`: revoke each granted privilege one at a time, run the tests of the packages that declare it, and fail if they still pass, because the privilege is unnecessary. |
+| G5 | Test J8: River's privileges for both roles (section 12.2). |
+
+Milestone placement follows section 16.2: G2 and G3 in M1. G1 applies from
+M1 onward as the harness runs every test as the real roles. G5 is in M6. The
+record assigns G4 to no milestone.
 
 ---
 
