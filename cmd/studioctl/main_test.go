@@ -29,7 +29,8 @@ func TestConfigCheck(t *testing.T) {
 	var out, errb bytes.Buffer
 	//nolint:gosec // G101: synthetic credential (host h); the test asserts config check never prints this password.
 	code := run(t.Context(), []string{"config", "check"},
-		lookup(map[string]string{"STUDIO_DATABASE_URL": "postgres://u:pw123@h/db"}), &out, &errb)
+		lookup(map[string]string{"STUDIO_DATABASE_URL": "postgres://u:pw123@h/db",
+			"STUDIO_AUDIT_HMAC_KEY": "test-only-hmac-key-0123456789abcdef"}), &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}

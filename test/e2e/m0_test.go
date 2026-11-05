@@ -30,6 +30,10 @@ import (
 
 func TestMain(m *testing.M) { os.Exit(testdb.Main(m)) }
 
+// e2eHMACKey is a test-only key for STUDIO_AUDIT_HMAC_KEY, which the binaries
+// require whenever a database is configured.
+const e2eHMACKey = "e2e-only-audit-hmac-key-0123456789abcdef"
+
 func requireEnv(t *testing.T, key string) string {
 	t.Helper()
 	v := os.Getenv(key)
@@ -184,6 +188,7 @@ func TestAPIServesHealthReadinessAndShutsDownGracefully(t *testing.T) {
 	p := start(t, "studio-api",
 		"STUDIO_HTTP_ADDR="+addr,
 		"STUDIO_DATABASE_URL="+db.URL(dbroles.App),
+		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey,
 		"STUDIO_SHUTDOWN_TIMEOUT=10s",
 	)
 	waitHealthy(t, base)
@@ -232,6 +237,7 @@ func TestAPINotReadyWhenDatabaseUnreachable(t *testing.T) {
 	p := start(t, "studio-api",
 		"STUDIO_HTTP_ADDR="+addr,
 		"STUDIO_DATABASE_URL=postgres://nobody:x@127.0.0.1:1/none?sslmode=disable&connect_timeout=1",
+		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey,
 		"STUDIO_READINESS_TIMEOUT=1s",
 	)
 	waitHealthy(t, base)
@@ -258,7 +264,8 @@ func TestAPIRejectsInvalidConfiguration(t *testing.T) {
 func TestWorkerStartsAndShutsDownGracefully(t *testing.T) {
 	db := testdb.New(t)
 	p := start(t, "studio-worker",
-		"STUDIO_DATABASE_URL="+db.URL(dbroles.Worker))
+		"STUDIO_DATABASE_URL="+db.URL(dbroles.Worker),
+		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey)
 	p.waitForLog(t, "worker idle", 10*time.Second)
 	if exit := p.stop(t, 15*time.Second); exit != 0 {
 		t.Fatalf("exit code %d", exit)

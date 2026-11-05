@@ -61,6 +61,8 @@ func TestStatementsQuoteIdentifiers(t *testing.T) {
 func TestNoWorkerOrReadOnlyAccessToCredentials(t *testing.T) {
 	for _, g := range Grants {
 		switch {
+		case (g.Role == Worker || g.Role == ReadOnly) && (g.Table == "sessions" || g.Table == "api_keys"):
+			t.Errorf("%s must not access credential table %s: %+v", g.Role, g.Table, g)
 		case g.Role == Worker && (g.Table == "users" || g.Table == "service_accounts" || g.Table == "principals"):
 			t.Errorf("worker must not access %s: %+v", g.Table, g)
 		case g.Role == Worker && g.Table == "idempotency_keys" && g.Privilege == "SELECT" &&

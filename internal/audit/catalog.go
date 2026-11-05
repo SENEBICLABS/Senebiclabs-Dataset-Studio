@@ -24,15 +24,62 @@ var Actions = Catalog{
 	// Written once by migration 00003 for the rows seeded by migration 00002
 	// (plan 8.1). Listed so readers can decode it.
 	ActionSystemSeeded: {Class: Command, DetailsVersion: 1},
+
+	// Authentication (M3, plan 8.1: login, logout, session and key changes
+	// are normal events; a failed login is a failed event).
+	ActionLogin:         {Class: Security, DetailsVersion: 1},
+	ActionLoginFailed:   {Class: Security, DetailsVersion: 1},
+	ActionLogout:        {Class: Security, DetailsVersion: 1},
+	ActionAPIKeyCreated: {Class: Security, DetailsVersion: 1},
+	ActionAPIKeyRevoked: {Class: Security, DetailsVersion: 1},
+	ActionUserCreated:   {Class: Command, DetailsVersion: 1},
 }
 
 // Action names.
 const (
 	ActionSystemSeeded = "system.seeded"
 	// ActionLoginFailed is the only action an anonymous actor may have (plan
-	// 7.1). It enters the catalog with authentication in M3.
-	ActionLoginFailed = "auth.login_failed"
+	// 7.1).
+	ActionLoginFailed   = "auth.login_failed"
+	ActionLogin         = "auth.login"
+	ActionLogout        = "auth.logout"
+	ActionAPIKeyCreated = "auth.api_key_created" //nolint:gosec // G101: an audit action name, not a credential.
+	ActionAPIKeyRevoked = "auth.api_key_revoked" //nolint:gosec // G101: an audit action name, not a credential.
+	ActionUserCreated   = "user.created"
 )
+
+// LoginDetails is the details struct of auth.login, version 1.
+type LoginDetails struct {
+	SessionExpiresAt string `json:"session_expires_at"`
+}
+
+// LoginFailedDetails is the details struct of auth.login_failed, version 1.
+// IdentifierHMAC is set for anonymous attempts (unknown identifier); the raw
+// identifier is never recorded (plan 8.1).
+type LoginFailedDetails struct {
+	Reason         string `json:"reason"`
+	IdentifierHMAC string `json:"identifier_hmac,omitempty"`
+}
+
+// LogoutDetails is the details struct of auth.logout, version 1.
+type LogoutDetails struct{}
+
+// APIKeyDetails is the details struct of auth.api_key_created and
+// auth.api_key_revoked, version 1. The key itself is never recorded.
+type APIKeyDetails struct {
+	Prefix      string `json:"prefix"`
+	PrincipalID string `json:"principal_id"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+}
+
+// UserCreatedDetails is the details struct of user.created, version 1.
+// OSUser and Hostname identify the operator when created by studioctl
+// (plan 7.2).
+type UserCreatedDetails struct {
+	GlobalRole string `json:"global_role"`
+	OSUser     string `json:"os_user,omitempty"`
+	Hostname   string `json:"hostname,omitempty"`
+}
 
 // SystemSeededDetails is the details struct of system.seeded, version 1.
 type SystemSeededDetails struct {

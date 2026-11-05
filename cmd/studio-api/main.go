@@ -17,6 +17,7 @@ import (
 
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/app"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/auth"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/config"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/db"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/health"
@@ -52,6 +53,7 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 	lc := app.New(log, cfg.ShutdownTimeout)
 
 	var checks []health.Checker
+	var authHandler *auth.Handler
 	if cfg.DatabaseURL != "" {
 		pool, err := db.Open(ctx, cfg.DatabaseURL, component)
 		if err != nil {
@@ -69,12 +71,21 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 		lc.OnShutdown("audit aggregator flush", func(ctx context.Context) error {
 			return agg.Shutdown(ctx, true)
 		})
+
+		// Authentication (M3): login, logout and /v1/me. Failed logins go to
+		// the aggregator; the HMAC key is required by config.Load.
+		authHandler = auth.NewHandler(auth.NewService(pool, auth.Config{
+			HMACKey: []byte(cfg.AuditHMACKey), IdleTimeout: cfg.SessionIdleTimeout, Failures: agg,
+		}), log)
 	}
 	hs := health.New(log, cfg.ReadinessTimeout, checks...)
 	lc.OnDrain(hs.SetDraining)
 
 	mux := http.NewServeMux()
 	hs.Register(mux)
+	if authHandler != nil {
+		authHandler.Register(mux)
+	}
 	mux.Handle("/", httpx.NotFound())
 
 	srv := &http.Server{

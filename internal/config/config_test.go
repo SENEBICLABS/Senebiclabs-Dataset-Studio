@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// testHMACKey satisfies the HMAC-key requirement in tests that set a database
+// URL but are about something else.
+const testHMACKey = "test-only-hmac-key-0123456789abcdef"
+
 func env(m map[string]string) Lookup {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
@@ -37,6 +41,7 @@ func TestOverrides(t *testing.T) {
 		EnvHTTPAddr:        "127.0.0.1:0",
 		EnvShutdownTimeout: "3s",
 		EnvDatabaseURL:     "postgres://u:p@localhost:5432/db?sslmode=disable",
+		EnvAuditHMACKey:    testHMACKey,
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -188,7 +193,8 @@ func TestRedactURLQueryCredentials(t *testing.T) {
 
 func TestSummaryRedactsQueryCredentials(t *testing.T) {
 	c, err := Load(env(map[string]string{
-		EnvDatabaseURL: "postgres://u@h/db?sslmode=disable&password=querySecretP&sslpassword=sslSecretQ",
+		EnvDatabaseURL:  "postgres://u@h/db?sslmode=disable&password=querySecretP&sslpassword=sslSecretQ",
+		EnvAuditHMACKey: testHMACKey,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +211,7 @@ func TestSummaryRedactsQueryCredentials(t *testing.T) {
 func TestLoadKeepsDatabaseURLUnchanged(t *testing.T) {
 	// Redaction is display-only: the DSN given to pgx must be byte-identical.
 	const dsn = "postgres://u@h/db?password=p%40ssR&sslmode=disable"
-	c, err := Load(env(map[string]string{EnvDatabaseURL: dsn}))
+	c, err := Load(env(map[string]string{EnvDatabaseURL: dsn, EnvAuditHMACKey: testHMACKey}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +222,7 @@ func TestLoadKeepsDatabaseURLUnchanged(t *testing.T) {
 
 func TestSummaryNeverContainsPassword(t *testing.T) {
 	//nolint:gosec // G101: synthetic credential (host h); the test asserts this password never appears in Summary.
-	c, err := Load(env(map[string]string{EnvDatabaseURL: "postgres://u:topsecret@h/db"}))
+	c, err := Load(env(map[string]string{EnvDatabaseURL: "postgres://u:topsecret@h/db", EnvAuditHMACKey: testHMACKey}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,5 +230,51 @@ func TestSummaryNeverContainsPassword(t *testing.T) {
 		if strings.Contains(v, "topsecret") {
 			t.Errorf("summary %s leaks password: %s", k, v)
 		}
+	}
+}
+
+func TestAuditHMACKeyRequiredWithDatabaseAndNeverPrinted(t *testing.T) {
+	//nolint:gosec // G101: synthetic credential (host h); the test asserts secrets are never printed.
+	base := map[string]string{EnvDatabaseURL: "postgres://u:p@h/db"}
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), EnvAuditHMACKey) {
+		t.Errorf("missing HMAC key accepted with a database: %v", err)
+	}
+	base[EnvAuditHMACKey] = "too-short"
+	if _, err := Load(env(base)); err == nil {
+		t.Error("short HMAC key accepted")
+	} else if strings.Contains(err.Error(), "too-short") {
+		t.Error("error echoes the key")
+	}
+	const key = "k3y-material-that-is-long-enough-0123456789"
+	base[EnvAuditHMACKey] = key
+	c, err := Load(env(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AuditHMACKey != key {
+		t.Error("key not loaded verbatim")
+	}
+	for k, v := range c.Summary() {
+		if strings.Contains(v, key) {
+			t.Errorf("summary %s prints the key", k)
+		}
+	}
+	if c.Summary()["audit_hmac_key"] != "(set)" {
+		t.Error("summary does not report the key as set")
+	}
+	// Without a database the key is optional.
+	if _, err := Load(env(nil)); err != nil {
+		t.Errorf("no database, no key: %v", err)
+	}
+}
+
+func TestSessionIdleTimeoutDefaultAndOverride(t *testing.T) {
+	c, _ := Load(env(nil))
+	if c.SessionIdleTimeout != 30*time.Minute {
+		t.Errorf("default idle = %s", c.SessionIdleTimeout)
+	}
+	c, err := Load(env(map[string]string{EnvSessionIdle: "5m"}))
+	if err != nil || c.SessionIdleTimeout != 5*time.Minute {
+		t.Errorf("override = %s %v", c.SessionIdleTimeout, err)
 	}
 }

@@ -96,10 +96,14 @@ func actorKey(ev Event) string {
 		return ev.ActorPrincipalID
 	}
 	// Anonymous actors (failed logins) are keyed by the identifier HMAC the
-	// caller puts in details (plan 8.1); never by the raw identifier.
-	if m, ok := ev.Details.(map[string]any); ok {
-		if h, ok := m["identifier_hmac"].(string); ok {
-			return "hmac:" + h
+	// caller puts in details (plan 8.1); never by the raw identifier. Details
+	// may be a map or a struct, so read the field through its JSON form.
+	if raw, err := encodeDetails(ev.Details); err == nil {
+		var d struct {
+			IdentifierHMAC string `json:"identifier_hmac"`
+		}
+		if json.Unmarshal(raw, &d) == nil && d.IdentifierHMAC != "" {
+			return "hmac:" + d.IdentifierHMAC
 		}
 	}
 	return "anonymous"
