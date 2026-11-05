@@ -152,6 +152,10 @@ func validateAddr(addr string) error {
 	return nil
 }
 
+// ValidateDatabaseURL checks that raw is a postgres:// or postgresql:// URL
+// with a host. Errors never echo the input, which may contain a password.
+func ValidateDatabaseURL(raw string) error { return validateDatabaseURL(raw) }
+
 func validateDatabaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
