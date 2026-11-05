@@ -235,3 +235,23 @@ func TestShutdownWithExpiredContextLogsAggregates(t *testing.T) {
 		t.Error("pending aggregate was not logged")
 	}
 }
+
+// Anonymous failures aggregate by identifier HMAC whether details are a map or
+// a typed struct.
+func TestAnonymousFailuresKeyedByIdentifierHMAC(t *testing.T) {
+	a := NewAggregator(failingDB{}, slog.New(slog.DiscardHandler), testCatalog, AggregatorConfig{})
+	add := func(h string) {
+		if err := a.Add(Event{Action: ActionLoginFailed, Outcome: Failed, ActorKind: Anonymous,
+			Details: LoginFailedDetails{Reason: "invalid_credentials", IdentifierHMAC: h}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("aaa")
+	add("aaa")
+	add("bbb")
+	_ = a.Add(Event{Action: ActionLoginFailed, Outcome: Failed, ActorKind: Anonymous,
+		Details: map[string]any{"identifier_hmac": "aaa"}})
+	if got := a.Pending(); got != 2 {
+		t.Errorf("pending keys = %d, want 2 (one per identifier HMAC)", got)
+	}
+}

@@ -28,7 +28,12 @@ const (
 	EnvReadTimeout       = "STUDIO_HTTP_READ_TIMEOUT"
 	EnvWriteTimeout      = "STUDIO_HTTP_WRITE_TIMEOUT"
 	EnvIdleTimeout       = "STUDIO_HTTP_IDLE_TIMEOUT"
+	EnvSessionIdle       = "STUDIO_SESSION_IDLE_TIMEOUT"
+	EnvAuditHMACKey      = "STUDIO_AUDIT_HMAC_KEY"
 )
+
+// MinAuditHMACKeyLength is the minimum length of STUDIO_AUDIT_HMAC_KEY.
+const MinAuditHMACKeyLength = 32
 
 // Config is the full process configuration. Components read only the parts
 // they need.
@@ -42,6 +47,15 @@ type Config struct {
 
 	ShutdownTimeout  time.Duration
 	ReadinessTimeout time.Duration
+
+	// SessionIdleTimeout ends a session that has not been used for this long
+	// (plan 14: "12 hours plus an idle timeout"; the plan sets no value).
+	SessionIdleTimeout time.Duration
+
+	// AuditHMACKey keys the HMAC of login identifiers recorded for anonymous
+	// failed logins (plan 8.1). Secret: never logged or printed. Required
+	// whenever DatabaseURL is set, because the API then serves login.
+	AuditHMACKey string
 
 	HTTP HTTP
 }
@@ -58,10 +72,11 @@ type HTTP struct {
 // Defaults returns the configuration used when no variables are set.
 func Defaults() Config {
 	return Config{
-		LogLevel:         "info",
-		LogFormat:        "json",
-		ShutdownTimeout:  20 * time.Second,
-		ReadinessTimeout: 2 * time.Second,
+		LogLevel:           "info",
+		LogFormat:          "json",
+		ShutdownTimeout:    20 * time.Second,
+		ReadinessTimeout:   2 * time.Second,
+		SessionIdleTimeout: 30 * time.Minute,
 		HTTP: HTTP{
 			Addr:              "127.0.0.1:8480",
 			ReadHeaderTimeout: 5 * time.Second,
@@ -110,6 +125,10 @@ func Load(lookup Lookup) (Config, error) {
 	dur(EnvReadTimeout, &c.HTTP.ReadTimeout)
 	dur(EnvWriteTimeout, &c.HTTP.WriteTimeout)
 	dur(EnvIdleTimeout, &c.HTTP.IdleTimeout)
+	dur(EnvSessionIdle, &c.SessionIdleTimeout)
+	if v, ok := lookup(EnvAuditHMACKey); ok {
+		c.AuditHMACKey = v // used verbatim; never trimmed, logged or echoed
+	}
 
 	c.LogLevel = strings.ToLower(c.LogLevel)
 	c.LogFormat = strings.ToLower(c.LogFormat)
@@ -130,6 +149,10 @@ func Load(lookup Lookup) (Config, error) {
 	if c.DatabaseURL != "" {
 		if err := validateDatabaseURL(c.DatabaseURL); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", EnvDatabaseURL, err))
+		}
+		if len(c.AuditHMACKey) < MinAuditHMACKeyLength {
+			errs = append(errs, fmt.Errorf("%s: must be set to at least %d characters when %s is set",
+				EnvAuditHMACKey, MinAuditHMACKeyLength, EnvDatabaseURL))
 		}
 	}
 
@@ -258,5 +281,7 @@ func (c Config) Summary() map[string]string {
 		"database_url":      db,
 		"shutdown_timeout":  c.ShutdownTimeout.String(),
 		"readiness_timeout": c.ReadinessTimeout.String(),
+		"session_idle":      c.SessionIdleTimeout.String(),
+		"audit_hmac_key":    map[bool]string{true: "(set)", false: "(not set)"}[c.AuditHMACKey != ""],
 	}
 }

@@ -1,0 +1,42 @@
+# sqlc configuration (plan 2.1: stores are generated SQL). Generated code is
+# committed; `make sqlc` regenerates it and `make check` fails if it is stale.
+# The schema is read from the forward-only goose migrations.
+version: "2"
+sql:
+  - engine: postgresql
+    schema:
+      - db/sqlc/00000_schema_prelude.sql
+      - migrations
+    queries: db/queries/auth.sql
+    gen:
+      go:
+        package: authdb
+        out: internal/auth/authdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type:
+              import: github.com/google/uuid
+              type: UUID
+              pointer: true
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true
+          - db_type: studio.citext
+            go_type: string
+          - db_type: citext
+            go_type: string
+          - db_type: inet
+            nullable: true
+            go_type:
+              import: net/netip
+              type: Addr
+              pointer: true

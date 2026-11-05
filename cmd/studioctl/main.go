@@ -1,6 +1,7 @@
 // Command studioctl is the operator CLI.
 //
-// Subcommands: version, config check (M0); db bootstrap, migrate (M1).
+// Subcommands: version, config check (M0); db bootstrap, migrate (M1);
+// create-admin (M3).
 // Backup and restore subcommands arrive with their milestones.
 package main
 
@@ -30,6 +31,10 @@ Usage:
   studioctl migrate [up]     as studio_migrator: apply migrations, then grants
                              (needs STUDIO_MIGRATOR_DATABASE_URL)
   studioctl migrate status   print the current and latest migration versions
+  studioctl create-admin --email <address> --name <display name> < password
+                             as studio_app: create a platform administrator;
+                             the password is read from stdin (needs
+                             STUDIO_DATABASE_URL)
   studioctl help             show this help
 
 Exit codes: 0 success, 1 failure, 2 usage error.
@@ -37,12 +42,16 @@ Exit codes: 0 success, 1 failure, 2 usage error.
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr)
+	code := runWithStdin(ctx, os.Args[1:], os.LookupEnv, os.Stdin, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
 }
 
 func run(ctx context.Context, args []string, lookup config.Lookup, stdout, stderr io.Writer) int {
+	return runWithStdin(ctx, args, lookup, nil, stdout, stderr)
+}
+
+func runWithStdin(ctx context.Context, args []string, lookup config.Lookup, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprint(stderr, usage)
 		return 2
@@ -69,6 +78,8 @@ func run(ctx context.Context, args []string, lookup config.Lookup, stdout, stder
 		return runDBBootstrap(ctx, lookup, stdout, stderr)
 	case "migrate":
 		return runMigrate(ctx, args[1:], lookup, stdout, stderr)
+	case "create-admin":
+		return runCreateAdmin(ctx, args[1:], lookup, stdin, stdout, stderr)
 	case "help", "-h", "--help":
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0

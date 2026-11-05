@@ -27,7 +27,8 @@ gates "pass" without running.
 make env       # creates .env from .env.example (any make target also does this)
 make up        # starts PostgreSQL and waits until it is healthy
 make db-setup  # creates the database roles and the studio database, then migrates
-make tools     # installs pinned golangci-lint v2.15.0 and govulncheck v1.9.0 into .tools/bin
+make tools     # installs pinned golangci-lint v2.15.0, govulncheck v1.9.0 and sqlc v1.31.1 into .tools/bin
+               # (sqlc compiles a C parser and needs about 2 GB of free disk)
 make check     # every gate
 ```
 
@@ -69,13 +70,41 @@ check locally, set in `.env`:
 
 ```sh
 STUDIO_DATABASE_URL=postgres://studio_app:<STUDIO_DB_APP_PASSWORD>@127.0.0.1:55432/studio?sslmode=disable
+STUDIO_AUDIT_HMAC_KEY=<at least 32 random characters, local only>
 ```
+
+`STUDIO_AUDIT_HMAC_KEY` is required whenever `STUDIO_DATABASE_URL` is set: it
+keys the HMAC recorded for failed logins with unknown identifiers (plan 8.1),
+so the raw identifier is never stored. It is never logged or printed.
 
 **PG\* environment variables:** pgx, like libpq, falls back to `PGHOST`,
 `PGUSER`, `PGPASSWORD`, `PGSSLMODE` and `~/.pgpass` for anything a connection
 URL leaves out. Always give complete URLs (host, user, database, sslmode) and
 make sure no stray `PG*` variables are set in the shell that runs the
 binaries.
+
+## Authentication (M3)
+
+The first administrator exists only through the CLI (plan 14). The password is
+read from stdin, never from flags or the environment:
+
+```sh
+STUDIO_DATABASE_URL=postgres://studio_app:...@127.0.0.1:55432/studio?sslmode=disable \
+  bin/studioctl create-admin --email admin@example.test --name "Local Admin" < password.txt
+```
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST /v1/auth/login` | `{"email", "password"}` → `{"token", "token_type": "Bearer", "expires_at", "principal_id"}`. Every credential failure returns the same 401 body. Rate limited per account (5/min) and per IP (20/min); over the limit returns 429 with `Retry-After`. |
+| `POST /v1/auth/logout` | Revokes the calling session (204). API keys are revoked instead, not logged out. |
+| `GET /v1/me` | The authenticated principal. |
+
+Sessions last 12 hours and end earlier after `STUDIO_SESSION_IDLE_TIMEOUT`
+without use. API keys (`dsk_<prefix>_<secret>`) are issued and revoked by the
+service; their HTTP endpoints arrive with authorization in M4. Only SHA-256
+hashes of tokens and keys, and argon2id hashes of passwords, are stored.
+Unauthenticated requests get 401 with `WWW-Authenticate: Bearer` and are not
+audited.
 
 ## Running the binaries
 
@@ -113,6 +142,8 @@ It exits 0 on a clean stop.
 | `STUDIO_DATABASE_URL` | empty | Optional; the `studio_app` URL (see Database identities). |
 | `STUDIO_SHUTDOWN_TIMEOUT` | `20s` | One deadline shared by every shutdown step. |
 | `STUDIO_READINESS_TIMEOUT` | `2s` | Per check. |
+| `STUDIO_SESSION_IDLE_TIMEOUT` | `30m` | Ends sessions unused for this long; they also expire 12 hours after login. |
+| `STUDIO_AUDIT_HMAC_KEY` | empty | Required (≥ 32 characters) when `STUDIO_DATABASE_URL` is set. Secret. |
 | `STUDIO_HTTP_{READ_HEADER,READ,WRITE,IDLE}_TIMEOUT` | 5s / 30s / 30s / 120s | |
 
 Invalid configuration lists every problem at once. Passwords are never
@@ -128,7 +159,7 @@ printed, whether they appear in the URL's userinfo or as `password` or
 | | 2 | Invalid configuration (`STUDIO_*` variables). |
 | `studioctl config check` | 0 | Configuration valid; effective settings printed with secrets redacted. |
 | | 1 | Configuration invalid; every problem listed on stderr. |
-| `studioctl db bootstrap`, `studioctl migrate [up\|status]` | 0 | Success. |
+| `studioctl db bootstrap`, `studioctl migrate [up\|status]`, `studioctl create-admin` | 0 | Success. |
 | | 1 | Missing or invalid settings, connection failure, or a failed step. |
 | `studioctl version`, `studioctl help` | 0 | Success. `version` exits 1 only if writing its output fails. |
 | `studioctl` (no command, unknown command, bad arguments) | 2 | Usage error; usage printed on stderr. |

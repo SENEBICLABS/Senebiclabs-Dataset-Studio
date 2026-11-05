@@ -67,6 +67,17 @@ var Grants = []Grant{
 	{Role: App, Table: "idempotency_keys", Privilege: "SELECT"},
 	{Role: App, Table: "idempotency_keys", Privilege: "INSERT"},
 
+	// sessions and api_keys (plan 6.3): every authenticated request reads
+	// them (S) and refreshes sessions.last_seen_at; login inserts sessions;
+	// logout and key revocation set revoked_at; administration inserts API
+	// keys. No other role can see them (credential tables).
+	{Role: App, Table: "sessions", Privilege: "SELECT"},
+	{Role: App, Table: "sessions", Privilege: "INSERT"},
+	{Role: App, Table: "sessions", Privilege: "UPDATE", Columns: []string{"last_seen_at", "revoked_at"}},
+	{Role: App, Table: "api_keys", Privilege: "SELECT"},
+	{Role: App, Table: "api_keys", Privilege: "INSERT"},
+	{Role: App, Table: "api_keys", Privilege: "UPDATE", Columns: []string{"revoked_at"}},
+
 	// audit_events (plan 6.3): every mutating row is "I audit_events"; the
 	// audit query is "S audit_events". Append-only: no role holds UPDATE or
 	// DELETE, and a trigger rejects them for everyone.
