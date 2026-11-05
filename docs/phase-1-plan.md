@@ -9,6 +9,7 @@ record into one document:
 | 2 | Records and releases promoted to required scope; tenancy assumption; slot-based schema extensions; backup consistency; database identities; audit semantics; dependency pins | Approved in principle |
 | 2.1 | Eight targeted corrections plus a River v0.49.0 transaction-behaviour inspection | Approved in principle |
 | 2.2 | Five narrow clarifications (root principal, actor kind, job-execution audit constraints, denied-event aggregation, River fence tests) | Requested by the project owner and incorporated before M0 was authorised |
+| 2.2 amendment (X2) | Test definitions P3a–P3d, AG1–AG4 and JA1–JA9 confirmed (section 17.4.1). No constraint changes. | Confirmed by Godwin, 2026-11-05 |
 
 Where a later revision changed an earlier one, this document states the final
 position and notes what it superseded. Editorial changes made while
@@ -1171,10 +1172,10 @@ scope in Rev 2.
 
 | Area | Tests | Definition status |
 |---|---|---|
-| Principals | P1–P6 | Defined in Rev 2.1 #1 (migrate from empty; catalog `created_by` test; non-root self-reference rejected; system user rejected; anonymous constraint; restore keeps `installation_id`). |
-| Root principal | P3a–P3d | **Unresolved:** identifiers were approved in Rev 2.2 #1 without written definitions. Derived from the constraints, pending confirmation: P3a root with `created_by ≠ id` rejected; P3b non-root self-reference rejected; P3c a second root, or a root at another id, rejected; P3d updating protected columns rejected. |
-| Job-execution audit | JA1–JA9 | Rev 2.2 #3 says "one violation each". The mapping to the nine constraints in section 8.2 is derived and pending confirmation. |
-| Aggregation | AG1–AG4 | **Unresolved:** identifiers were approved in Rev 2.2 #4 without written definitions. Derived from the stated behaviour, pending confirmation: AG1 shutdown flush writes pending aggregates; AG2 flush failure produces `audit_aggregate_unflushed` logs; AG3 the 10,000-key cap triggers an early flush; AG4 a hard kill loses at most the current window. |
+| Principals | P1–P6 | Defined in Rev 2.1 #1 (migrate from empty; catalog `created_by` test; non-root self-reference rejected; system user rejected; anonymous constraint; restore keeps `installation_id`). P3 is extended by P3b below. |
+| Root principal | P3a–P3d | **Confirmed (X2).** Defined below. |
+| Job-execution audit | JA1–JA9 | **Confirmed (X2).** Defined below. |
+| Aggregation | AG1–AG4 | **Confirmed (X2).** Defined below. |
 | Freeze | F1–F8 | Defined in Rev 2.1 #2. |
 | Status rules | D1–D7 | Defined in Rev 2.1 #3. |
 | Grants | G1–G5 | Defined in Rev 2.1 #4. |
@@ -1185,6 +1186,60 @@ scope in Rev 2.
 | Jobs | J1–J10 (J4a–c, J5a–c) | Defined in Rev 2.1 and Rev 2.2 #5. |
 | Extensions | E1–E11 | Defined in Rev 2. |
 | Backup | C1–C10 | Defined in Rev 2, reconciled in Rev 2.1. |
+
+#### 17.4.1 Confirmed test definitions for X2
+
+Godwin confirmed these on 2026-11-05.
+
+**Constraints versus tests.** These are *test definitions*. They state how
+already approved constraints are proven, and they add no new constraint. The
+architectural constraints stay exactly as written in section 7.1 (root
+principal), section 8.2 (job-execution audit) and section 8.3 (denied-event
+aggregation). If a test and a constraint ever disagree, the constraint wins and
+the test is corrected.
+
+**Milestone placement** is unchanged from section 16.2: P3a–P3d in M1;
+AG1–AG4 and JA1–JA9 in M2. Any JA test that needs real River jobs may move to
+M6.
+
+**Root principal (section 7.1)**
+
+Each test asserts that the database itself rejects the violation, through a
+constraint or trigger and using raw SQL, not only the Go code.
+
+| Test | Asserts |
+|---|---|
+| P3a | The root principal (`handle = 'system:migration'`) must reference itself and be of kind `system`. Inserting or seeding it with `created_by ≠ id`, or with any other kind, is rejected. |
+| P3b | No non-root principal may reference itself. This **extends the existing P3 test** (Rev 2.1 #1) with the equivalence direction from Rev 2.2, rather than adding a duplicate. |
+| P3c | There is exactly one root, at the fixed id `00000000-0000-7000-8000-000000000001`. A second `system:migration` row, a root at any other id, and a non-root row at the root id are all rejected. |
+| P3d | After insert, updating `id`, `handle`, `kind` or `created_by` on any principal, including the root, is rejected. |
+
+**Denied-event aggregation (section 8.3)**
+
+| Test | Asserts |
+|---|---|
+| AG1 | On graceful shutdown, the aggregator flush runs as a shutdown hook after HTTP has drained, and writes every pending aggregate to `audit_events`. |
+| AG2 | If the shutdown flush fails (for example, the database is unavailable), each pending aggregate is written as an ERROR log record named `audit_aggregate_unflushed`, with its full fields, and no aggregate is silently dropped. |
+| AG3 | Reaching 10,000 distinct aggregation keys triggers an early flush before the 60-second window closes. |
+| AG4 | After a hard crash (SIGKILL), loss is bounded to at most one aggregation window of *denied and failed* events. Events from earlier, already-flushed windows are present, and succeeded events, which are transactional, are unaffected. |
+
+**Job-execution audit (section 8.2)**
+
+There is one test per constraint, in the order they appear in section 8.2.
+Each inserts a row that violates exactly that constraint, and asserts it is
+rejected.
+
+| Test | Constraint (section 8.2) | Violation asserted to fail |
+|---|---|---|
+| JA1 | `(action_class = 'job_execution') = (job_id IS NOT NULL)` | A `job_execution` event without `job_id`, and a non-job event with `job_id`. |
+| JA2 | `job_id`, `job_attempt` and `job_trigger` are all set or all null | Any partial combination. |
+| JA3 | `job_attempt >= 1` | `job_attempt = 0`. |
+| JA4 | `(action_class = 'job_execution') = (actor_principal_id = <system:worker id>)` | A job event by any other actor, and a non-job event by `system:worker`. |
+| JA5 | `job_trigger = 'command'` requires `causation_event_id` and `on_behalf_of_principal_id` | A command-triggered event missing either one. |
+| JA6 | `job_trigger = 'periodic'` forbids `causation_event_id` and `on_behalf_of_principal_id` | A periodic event with either one set. |
+| JA7 | Causation foreign key `(causation_event_id, causation_outcome) → audit_events(id, outcome)`, with `causation_outcome = 'succeeded'` | A causation pointing to a nonexistent event, or to a `denied` or `failed` event. |
+| JA8 | The causation insert trigger | Three sub-cases, each must fail: the causing event's `details.enqueued_jobs` does not contain this `job_id`; the causing event did not occur earlier; `on_behalf_of` is not inherited from the causing event. |
+| JA9 | Unique index on `job_id` where `action_class = 'job_execution'` | A second `job_execution` event for the same `job_id`. |
 
 ---
 
@@ -1266,7 +1321,7 @@ scope in Rev 2.
 | # | Item | Needed by |
 |---|---|---|
 | X1 | Role mapping for the Rev 2 record, revision, batch, dataset-version and freeze operations (section 14) | M12 |
-| X2 | Definitions of tests P3a–P3d and AG1–AG4, and the JA1–JA9 mapping; derived versions are proposed in section 17.4. Rev 2.2 also did not assign AG and JA to milestones. Placing them in M2 (section 16.2) is inferred from where the audit table and aggregator are built; JA tests that need real River jobs may move to M6. | M1 and M2 |
+| X2 | **Resolved 2026-11-05.** Definitions of tests P3a–P3d, AG1–AG4 and JA1–JA9 confirmed by Godwin; recorded in section 17.4.1. Milestone placement stays as in section 16.2 (JA tests that need real River jobs may move to M6). | — |
 | X3 | Whether `JobRescueMany` can be called through River's driver for J4a | M6 |
 | X4 | `blob.audit` permissions (section 6.3) | M5 |
 | X5 | Whether any optional item (O3–O7, partial-success batches) enters Phase 1 | After M14 |
