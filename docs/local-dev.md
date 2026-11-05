@@ -97,14 +97,40 @@ STUDIO_DATABASE_URL=postgres://studio_app:...@127.0.0.1:55432/studio?sslmode=dis
 |---|---|
 | `POST /v1/auth/login` | `{"email", "password"}` → `{"token", "token_type": "Bearer", "expires_at", "principal_id"}`. Every credential failure returns the same 401 body. Rate limited per account (5/min) and per IP (20/min); over the limit returns 429 with `Retry-After`. |
 | `POST /v1/auth/logout` | Revokes the calling session (204). API keys are revoked instead, not logged out. |
-| `GET /v1/me` | The authenticated principal. |
+| `GET /v1/me` | The authenticated principal, including its `global_role`. |
 
 Sessions last 12 hours and end earlier after `STUDIO_SESSION_IDLE_TIMEOUT`
-without use. API keys (`dsk_<prefix>_<secret>`) are issued and revoked by the
-service; their HTTP endpoints arrive with authorization in M4. Only SHA-256
+without use. API keys have the form `dsk_<prefix>_<secret>`. Only SHA-256
 hashes of tokens and keys, and argon2id hashes of passwords, are stored.
 Unauthenticated requests get 401 with `WWW-Authenticate: Bearer` and are not
 audited.
+
+## Authorization and administration (M4)
+
+Authorization is deny by default. The role-to-permission matrix of plan
+section 14 lives in `internal/authz`. Services check it before reading
+anything, so a refused request gets 403 even for an id that does not exist.
+Every 403 is recorded as a `denied` audit event: events are aggregated per
+actor, action and target for 60 seconds and flushed at shutdown.
+
+Global roles are `platform_admin`, `registry_admin` and `member`. The role is
+read on every request, so a change takes effect at once. Project roles
+arrive with projects in M10.
+
+All of these endpoints need `platform_admin` ("Manage users and service
+accounts"):
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /v1/users` | Cursor-paginated (`?limit=1..200&cursor=`). Responses never include password hashes. |
+| `POST /v1/users` | `{"email", "display_name", "password", "global_role"?}`; the role defaults to `member`. Returns 409 if the email is taken. |
+| `GET /v1/users/{id}` | One user. |
+| `PATCH /v1/users/{id}` | Any of `display_name`, `global_role`, `password`. A password change revokes the user's open sessions. The email cannot be changed. |
+| `POST /v1/users/{id}:disable` | Disables the user and revokes its sessions; its API keys stop working at once. |
+| `GET /v1/service-accounts`, `POST /v1/service-accounts` | `{"name", "description"?, "global_role"?}`. Service accounts have no password and use API keys. |
+| `POST /v1/principals/{id}/api-keys` | `{"expires_at": RFC 3339}` → the key, shown once. Works for users and service accounts, never system principals. |
+| `GET /v1/principals/{id}/api-keys` | Key metadata only: no secret, no hash. |
+| `DELETE /v1/api-keys/{id}` | Permanent revocation (204). |
 
 ## Running the binaries
 

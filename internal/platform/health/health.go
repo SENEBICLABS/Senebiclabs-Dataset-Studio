@@ -113,17 +113,26 @@ func (s *Service) CheckNames() []string {
 	return names
 }
 
-// Register mounts GET /healthz and GET /readyz on mux.
+// Routes lists GET /healthz and GET /readyz (plan 15: Ops; no auth).
+func (s *Service) Routes() []httpx.Route {
+	return []httpx.Route{
+		{Method: http.MethodGet, Path: "/healthz", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		})},
+		{Method: http.MethodGet, Path: "/readyz", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rep := s.Readiness(r.Context())
+			status := http.StatusOK
+			if rep.Status != "ready" {
+				status = http.StatusServiceUnavailable
+			}
+			httpx.WriteJSON(w, status, rep)
+		})},
+	}
+}
+
+// Register mounts the health routes on mux.
 func (s *Service) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		rep := s.Readiness(r.Context())
-		status := http.StatusOK
-		if rep.Status != "ready" {
-			status = http.StatusServiceUnavailable
-		}
-		httpx.WriteJSON(w, status, rep)
-	})
+	for _, rt := range s.Routes() {
+		mux.Handle(rt.String(), rt.Handler)
+	}
 }

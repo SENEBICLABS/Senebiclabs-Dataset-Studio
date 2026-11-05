@@ -33,6 +33,20 @@ var Actions = Catalog{
 	ActionAPIKeyCreated: {Class: Security, DetailsVersion: 1},
 	ActionAPIKeyRevoked: {Class: Security, DetailsVersion: 1},
 	ActionUserCreated:   {Class: Command, DetailsVersion: 1},
+
+	// User and service-account administration (M4). Role, password and
+	// status changes are security events (plan 8.1).
+	ActionUserUpdated:           {Class: Security, DetailsVersion: 1},
+	ActionUserDisabled:          {Class: Security, DetailsVersion: 1},
+	ActionServiceAccountCreated: {Class: Command, DetailsVersion: 1},
+
+	// Reads are not audited (plan 8.1, U3), but a refused read is: every 403
+	// is a denied event (plan 8.1). These actions are written only with
+	// outcome denied, through the aggregator.
+	ActionUserList:           {Class: Security, DetailsVersion: 1},
+	ActionUserRead:           {Class: Security, DetailsVersion: 1},
+	ActionServiceAccountList: {Class: Security, DetailsVersion: 1},
+	ActionAPIKeyList:         {Class: Security, DetailsVersion: 1},
 }
 
 // Action names.
@@ -46,7 +60,41 @@ const (
 	ActionAPIKeyCreated = "auth.api_key_created" //nolint:gosec // G101: an audit action name, not a credential.
 	ActionAPIKeyRevoked = "auth.api_key_revoked" //nolint:gosec // G101: an audit action name, not a credential.
 	ActionUserCreated   = "user.created"
+
+	ActionUserUpdated           = "user.updated"
+	ActionUserDisabled          = "user.disabled"
+	ActionServiceAccountCreated = "service_account.created"
+	ActionUserList              = "user.list"
+	ActionUserRead              = "user.read"
+	ActionServiceAccountList    = "service_account.list"
+	ActionAPIKeyList            = "auth.api_key_list" //nolint:gosec // G101: an audit action name, not a credential.
 )
+
+// DeniedDetails is the details struct of every denied event, version 1. The
+// aggregator adds repeat_count, first_seen and last_seen (plan 8.3).
+type DeniedDetails struct {
+	Permission string `json:"permission"`
+}
+
+// UserUpdatedDetails is the details struct of user.updated, version 1. It
+// names the changed fields and never carries a password or its hash.
+type UserUpdatedDetails struct {
+	Fields          []string `json:"fields"`
+	GlobalRole      string   `json:"global_role,omitempty"`
+	SessionsRevoked int64    `json:"sessions_revoked"`
+}
+
+// UserDisabledDetails is the details struct of user.disabled, version 1.
+type UserDisabledDetails struct {
+	SessionsRevoked int64 `json:"sessions_revoked"`
+}
+
+// ServiceAccountCreatedDetails is the details struct of
+// service_account.created, version 1.
+type ServiceAccountCreatedDetails struct {
+	Name       string `json:"name"`
+	GlobalRole string `json:"global_role"`
+}
 
 // LoginDetails is the details struct of auth.login, version 1.
 type LoginDetails struct {

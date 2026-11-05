@@ -210,6 +210,12 @@ func TestG2RolesAreRefusedForbiddenOperations(t *testing.T) {
 			`DELETE FROM studio.users`,
 			`UPDATE studio.principals SET handle = 'x'`,
 			`SELECT handle FROM studio.principals`,
+			// M4: administration may change only display_name, global_role
+			// and password_hash on users, and nothing on service accounts.
+			`UPDATE studio.users SET email = 'x@example.test'`,
+			`UPDATE studio.service_accounts SET global_role = 'platform_admin'`,
+			`DELETE FROM studio.service_accounts`,
+			`SELECT created_by FROM studio.users`,
 			`SELECT * FROM studio.installation`,
 			`SELECT * FROM studio.goose_db_version`,
 			`CREATE TABLE studio.x (id int)`,

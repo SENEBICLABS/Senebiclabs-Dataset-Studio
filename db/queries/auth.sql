@@ -14,9 +14,13 @@ VALUES (sqlc.arg(id), sqlc.arg(principal_id), sqlc.arg(token_hash), sqlc.arg(cre
         sqlc.arg(expires_at), sqlc.arg(created_at), sqlc.narg(ip), sqlc.narg(user_agent));
 
 -- name: GetSessionByTokenHash :one
-SELECT s.id, s.principal_id, s.expires_at, s.last_seen_at, s.revoked_at, p.kind, p.status
+-- The global role is read on every request, so a role change or a disabled
+-- principal takes effect at once (M4).
+SELECT s.id, s.principal_id, s.expires_at, s.last_seen_at, s.revoked_at, p.kind, p.status,
+       u.global_role
 FROM studio.sessions s
 JOIN studio.principals p ON p.id = s.principal_id
+JOIN studio.users u ON u.principal_id = s.principal_id
 WHERE s.token_hash = sqlc.arg(token_hash);
 
 -- name: TouchSession :exec
@@ -38,9 +42,14 @@ VALUES (sqlc.arg(id), sqlc.arg(principal_id), sqlc.arg(principal_kind), sqlc.arg
         sqlc.arg(created_at), sqlc.arg(created_by), sqlc.arg(expires_at));
 
 -- name: GetAPIKeyByPrefix :one
-SELECT k.id, k.principal_id, k.key_hash, k.expires_at, k.revoked_at, p.kind, p.status
+-- A key belongs to a user or a service account; the global role comes from
+-- whichever of the two rows exists.
+SELECT k.id, k.principal_id, k.key_hash, k.expires_at, k.revoked_at, p.kind, p.status,
+       COALESCE(u.global_role, sa.global_role, '')::text AS global_role
 FROM studio.api_keys k
 JOIN studio.principals p ON p.id = k.principal_id
+LEFT JOIN studio.users u ON u.principal_id = k.principal_id
+LEFT JOIN studio.service_accounts sa ON sa.principal_id = k.principal_id
 WHERE k.prefix = sqlc.arg(prefix);
 
 -- name: GetPrincipalForKey :one
