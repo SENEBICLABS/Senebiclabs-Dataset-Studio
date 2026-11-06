@@ -76,7 +76,11 @@ func assertNoGrantDrift(t *testing.T, db *testdb.DB) {
 	admin := db.Connect(t, testdb.Admin)
 	managed := dbroles.ManagedRoles
 
-	diff(t, "table and column privileges", tablePrivilegeKeys(t, admin), dbroles.ExpectedKeys(dbroles.Grants))
+	// pg_class holds tables and sequences, so sequence grants (M6) are
+	// compared in the same set.
+	wantRel := append(dbroles.ExpectedKeys(dbroles.Grants), dbroles.ExpectedObjectKeys(dbroles.ObjectGrants, dbroles.Sequence)...)
+	slices.Sort(wantRel)
+	diff(t, "table, column and sequence privileges", tablePrivilegeKeys(t, admin), wantRel)
 
 	gotSchema := collect(t, admin, `
 		SELECT n.nspname || '|' || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
@@ -92,14 +96,26 @@ func assertNoGrantDrift(t *testing.T, db *testdb.DB) {
 	diff(t, "schema privileges", gotSchema, wantSchema)
 
 	gotFunc := collect(t, admin, `
-		SELECT p.oid::regprocedure::text || '|' ||
-		       CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+		SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+		       || '|' || p.proname || '|' || a.privilege_type || '|'
 		FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'studio'
 		CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
 		WHERE NOT EXISTS (SELECT 1 FROM pg_depend d
 		                  WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
 		  AND a.grantee IN (`+grantees+`)`, managed)
-	diff(t, "function EXECUTE", gotFunc, nil)
+	diff(t, "function EXECUTE", gotFunc, dbroles.ExpectedObjectKeys(dbroles.ObjectGrants, dbroles.Function))
+
+	// Enum and domain types (M6): PUBLIC's default USAGE is revoked.
+	gotType := collect(t, admin, `
+		SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+		       || '|' || ty.typname || '|' || a.privilege_type || '|'
+		FROM pg_type ty JOIN pg_namespace n ON n.oid = ty.typnamespace AND n.nspname = 'studio'
+		CROSS JOIN LATERAL aclexplode(coalesce(ty.typacl, acldefault('T', ty.typowner))) a
+		WHERE ty.typtype IN ('e', 'd')
+		  AND NOT EXISTS (SELECT 1 FROM pg_depend d
+		                  WHERE d.classid = 'pg_type'::regclass AND d.objid = ty.oid AND d.deptype = 'e')
+		  AND a.grantee IN (`+grantees+`)`, managed)
+	diff(t, "type USAGE", gotType, dbroles.ExpectedObjectKeys(dbroles.ObjectGrants, dbroles.Type))
 
 	gotDB := collect(t, admin, `
 		SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END || '|' || a.privilege_type

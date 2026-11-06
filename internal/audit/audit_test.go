@@ -255,3 +255,23 @@ func TestAnonymousFailuresKeyedByIdentifierHMAC(t *testing.T) {
 		t.Errorf("pending keys = %d, want 2 (one per identifier HMAC)", got)
 	}
 }
+
+// A command that enqueues a job pre-assigns its event id (M6, plan 8.2).
+func TestRecordUsesPreassignedID(t *testing.T) {
+	w := NewWriter(testCatalog)
+	rec := &execRecorder{}
+	id, err := NewEventID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := userEvent("thing.created", Succeeded)
+	ev.ID = id
+	got, err := w.Record(t.Context(), rec, ev)
+	if err != nil || got != id || rec.args[0] != id {
+		t.Fatalf("Record = %q, %v (row id %v), want %q", got, err, rec.args[0], id)
+	}
+	ev.ID = "not-a-uuid"
+	if _, err := w.Record(t.Context(), rec, ev); err == nil {
+		t.Error("invalid preassigned id accepted")
+	}
+}

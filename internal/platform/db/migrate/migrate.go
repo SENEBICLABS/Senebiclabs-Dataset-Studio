@@ -123,12 +123,15 @@ func ApplyGrants(ctx context.Context, db *sql.DB) error {
 	if err := dbroles.Validate(dbroles.Grants); err != nil {
 		return fmt.Errorf("grant map: %w", err)
 	}
+	if err := dbroles.ValidateObjects(dbroles.ObjectGrants); err != nil {
+		return fmt.Errorf("object grant map: %w", err)
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("grants: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, stmt := range dbroles.Statements(dbroles.Grants) {
+	for _, stmt := range dbroles.Statements(dbroles.Grants, dbroles.ObjectGrants) {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("grants: %w", err)
 		}

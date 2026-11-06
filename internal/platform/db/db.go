@@ -1,7 +1,7 @@
 // Package db owns the PostgreSQL connection pool.
 //
-// M0 scope: open a pool and expose a readiness check. Roles, migrations and
-// transaction helpers arrive in M1.
+// It opens the pool, exposes a readiness check and provides WithTx, the
+// transaction helper every command and job uses (plan 4).
 package db
 
 import (
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,6 +44,33 @@ func (p PingChecker) Check(ctx context.Context) error {
 	var one int
 	if err := p.Pool.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
 		return fmt.Errorf("database ping: %w", err)
+	}
+	return nil
+}
+
+// Beginner is satisfied by *pgxpool.Pool, *pgx.Conn and pgx.Tx.
+type Beginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+// WithTx runs fn in one transaction and commits only if fn returns nil. Any
+// error, including one returned by River inside fn, rolls the whole
+// transaction back (plan 3.3 R4: River no longer uses savepoints, so a River
+// error leaves the transaction unusable). A panic in fn also rolls back and
+// is re-raised.
+func WithTx(ctx context.Context, db Beginner, fn func(tx pgx.Tx) error) error {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	// Rollback after a successful Commit is a no-op. WithoutCancel lets the
+	// rollback reach the server even when ctx has already expired.
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }
