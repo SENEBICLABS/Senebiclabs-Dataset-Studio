@@ -10,6 +10,13 @@ record into one document:
 | 2.1 | Eight targeted corrections plus a River v0.49.0 transaction-behaviour inspection | Approved in principle |
 | 2.2 | Five narrow clarifications (root principal, actor kind, job-execution audit constraints, denied-event aggregation, River fence tests) | Requested by the project owner and incorporated before M0 was authorised |
 | 2.2 amendment (X2) | Test definitions P3a–P3d, AG1–AG4 and JA1–JA9 confirmed (section 17.4.1). No constraint changes. | Confirmed by Godwin, 2026-11-05 |
+| Editorial addendum (non-normative) | Adds the pointer below to `docs/phase-2-plan.md`. No requirement, scope, exclusion, assumption, acceptance criterion, dependency or decision is changed. This plan remains Revision 2.2. | Approved by Godwin, 2026-11-06 |
+
+> **Non-normative pointer.** Later work on dataset production is described in
+> [`docs/phase-2-plan.md`](phase-2-plan.md). That document has no effect on
+> this plan. Everything in this plan, including the exclusions in section 18,
+> the assumptions in section 20.2 and the acceptance criteria in section 17,
+> applies exactly as written.
 
 Where a later revision changed an earlier one, this document states the final
 position and notes what it superseded. Editorial changes made while
