@@ -48,8 +48,10 @@ CREATE TABLE studio.blob_uploads (
 
 CREATE INDEX blob_uploads_staging_expiry_idx ON studio.blob_uploads (expires_at) WHERE state = 'staging';
 
--- An upload leaves 'staging' exactly once, to a terminal state, and nothing
--- else about it ever changes.
+-- An upload leaves 'staging' exactly once, to exactly one terminal state
+-- (promoted, deduplicated or abandoned), in the same UPDATE that records its
+-- outcome. An UPDATE that leaves it 'staging' is rejected, so nothing about a
+-- staging upload can change before its outcome. Terminal rows never change.
 -- +goose StatementBegin
 CREATE FUNCTION studio.blob_uploads_guard_update() RETURNS trigger
     LANGUAGE plpgsql
@@ -58,6 +60,10 @@ AS $$
 BEGIN
     IF OLD.state <> 'staging' THEN
         RAISE EXCEPTION 'blob_uploads: upload % is already %', OLD.id, OLD.state
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF NEW.state NOT IN ('promoted', 'deduplicated', 'abandoned') THEN
+        RAISE EXCEPTION 'blob_uploads: upload % must leave staging for a terminal state, not %', OLD.id, NEW.state
             USING ERRCODE = 'restrict_violation';
     END IF;
     IF NEW.id IS DISTINCT FROM OLD.id

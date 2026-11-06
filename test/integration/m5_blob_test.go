@@ -555,3 +555,79 @@ func TestBlobAuditIsIdempotent(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// The one-way transition, in raw SQL (plan 5.3, 11): an UPDATE that leaves a
+// row in staging is rejected whatever it changes, each terminal transition
+// is accepted, and a terminal row never changes again.
+func TestBlobUploadStagingTransitionsInRawSQL(t *testing.T) {
+	e := newBlobEnv(t)
+	newStaging := func() uuid.UUID {
+		id := uuid.Must(uuid.NewV7())
+		if _, err := e.admin.Exec(ctx(t), `INSERT INTO studio.blob_uploads (id, staging_key, created_by) VALUES ($1, $2, $3)`,
+			id, id.String(), e.user); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := newStaging()
+	sum := sha256.Sum256([]byte("content"))
+	for _, stmt := range []string{
+		`UPDATE studio.blob_uploads SET size = 7 WHERE id = $1`,
+		`UPDATE studio.blob_uploads SET sha256 = sha256('content'::bytea), size = 7 WHERE id = $1`,
+		`UPDATE studio.blob_uploads SET state = 'staging' WHERE id = $1`,
+		`UPDATE studio.blob_uploads SET state = 'staging', size = 7 WHERE id = $1`,
+	} {
+		wantSQLState(t, exec(t, e.admin, stmt, id), restrictViolation, "", "staging to staging: "+stmt)
+	}
+	// Each terminal transition is accepted (each statement is rolled back,
+	// so the same row is reused).
+	wantOK(t, exec(t, e.admin, `UPDATE studio.blob_uploads SET state = 'promoted', sha256 = $2, size = 7, promoted_at = now() WHERE id = $1`,
+		id, sum[:]), "staging to promoted")
+	wantOK(t, exec(t, e.admin, `UPDATE studio.blob_uploads SET state = 'deduplicated', sha256 = $2, size = 7 WHERE id = $1`,
+		id, sum[:]), "staging to deduplicated")
+	wantOK(t, exec(t, e.admin, `UPDATE studio.blob_uploads SET state = 'abandoned' WHERE id = $1`, id), "staging to abandoned")
+
+	// A committed terminal row is final.
+	done := newStaging()
+	if _, err := e.admin.Exec(ctx(t), `UPDATE studio.blob_uploads SET state = 'abandoned' WHERE id = $1`, done); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`UPDATE studio.blob_uploads SET state = 'staging' WHERE id = $1`,
+		`UPDATE studio.blob_uploads SET state = 'promoted', sha256 = sha256('x'::bytea), size = 1, promoted_at = now() WHERE id = $1`,
+		`UPDATE studio.blob_uploads SET size = 1 WHERE id = $1`,
+	} {
+		wantSQLState(t, exec(t, e.admin, stmt, done), restrictViolation, "", "terminal row: "+stmt)
+	}
+}
+
+// /readyz needs only to count health events: the API role reads the id
+// column and nothing else, and the readiness check works within that.
+func TestBlobReadinessReadsOnlyHealthEventIDs(t *testing.T) {
+	e := newBlobEnv(t)
+	app := e.db.Connect(t, dbroles.App)
+	for _, stmt := range []string{
+		`SELECT kind FROM studio.blob_health_events`,
+		`SELECT details FROM studio.blob_health_events`,
+		`SELECT blob_object_id FROM studio.blob_health_events`,
+		`SELECT detected_at FROM studio.blob_health_events`,
+		`SELECT created_by FROM studio.blob_health_events`,
+		`SELECT * FROM studio.blob_health_events`,
+	} {
+		wantSQLState(t, exec(t, app, stmt), insufficientPriv, "", "api: "+stmt)
+	}
+	wantOK(t, exec(t, app, `SELECT count(id) FROM studio.blob_health_events`), "api counts event ids")
+
+	checker := blob.HealthChecker{Pool: e.app} // the API role's pool
+	if err := checker.Check(ctx(t)); err != nil {
+		t.Fatalf("readiness with no events: %v", err)
+	}
+	obj := e.upload(t, []byte("will be reported"))
+	if _, err := e.admin.Exec(ctx(t), `INSERT INTO studio.blob_health_events (blob_object_id, kind, created_by) VALUES ($1, 'missing', $2)`,
+		obj.ID, workerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := checker.Check(ctx(t)); err == nil || !strings.Contains(err.Error(), "1 missing or corrupt") {
+		t.Errorf("readiness with one event = %v, want a failure counting 1", err)
+	}
+}

@@ -37,9 +37,10 @@ func (q *Queries) BlobExists(ctx context.Context, sha256 []byte) (bool, error) {
 }
 
 const countHealthEvents = `-- name: CountHealthEvents :one
-SELECT count(*) FROM studio.blob_health_events
+SELECT count(id) FROM studio.blob_health_events
 `
 
+// Run by studio_app for /readyz, which may read only the id column.
 func (q *Queries) CountHealthEvents(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countHealthEvents)
 	var count int64

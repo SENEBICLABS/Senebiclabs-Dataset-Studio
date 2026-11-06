@@ -175,9 +175,10 @@ var Grants = []Grant{
 	{Role: App, Table: "blob_uploads", Privilege: "UPDATE", Columns: []string{"state", "sha256", "size", "promoted_at"}},
 	{Role: App, Table: "blob_objects", Privilege: "SELECT"},
 	{Role: App, Table: "blob_objects", Privilege: "INSERT"},
-	// /readyz fails while a blob health event exists (plan 11), so the API
-	// reads blob_health_events.
-	{Role: App, Table: "blob_health_events", Privilege: "SELECT"},
+	// /readyz fails while a blob health event exists (plan 11). The API only
+	// counts events, so it may read the id column and nothing else: not the
+	// blob, kind, details or authorship.
+	{Role: App, Table: "blob_health_events", Privilege: "SELECT", Columns: []string{"id"}},
 	// studio_worker, "blob.sweep: S/U blob_uploads(state); S blob_objects".
 	{Role: Worker, Table: "blob_uploads", Privilege: "SELECT", Columns: []string{"id", "state", "staging_key", "expires_at"}},
 	{Role: Worker, Table: "blob_uploads", Privilege: "UPDATE", Columns: []string{"state"}},

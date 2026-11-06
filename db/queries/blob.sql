@@ -68,4 +68,5 @@ VALUES (sqlc.arg(blob_object_id), sqlc.arg(kind), sqlc.arg(details), sqlc.arg(cr
 ON CONFLICT DO NOTHING;
 
 -- name: CountHealthEvents :one
-SELECT count(*) FROM studio.blob_health_events;
+-- Run by studio_app for /readyz, which may read only the id column.
+SELECT count(id) FROM studio.blob_health_events;

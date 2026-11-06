@@ -884,7 +884,8 @@ exclusive `BACKUP_GC` lock and skips its run if a backup holds it.
 Committed blobs are immutable and are never deleted in Phase 1.
 
 **Assumption (M5):** the plan sets no interval for `blob.audit`; it runs
-daily. The sweep keeps the planned 15 minutes.
+daily. Godwin accepted this default on 2026-11-07. It remains an Assumption,
+not a plan requirement. The sweep keeps the planned 15 minutes.
 
 **Tests B1–B8:** crash injection at each point, the sweeper racing an
 uploader, the backup lock, concurrent dedupe, missing-file detection, and

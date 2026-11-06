@@ -25,7 +25,8 @@ const (
 
 // Schedule and grace periods. The sweep interval and the 24-hour grace are
 // the plan's (11; approved default "24-hour blob grace periods"). The plan
-// sets no blob.audit interval; daily is this implementation's default.
+// sets no blob.audit interval: daily is an Assumption (plan 11), a default
+// Godwin accepted on 2026-11-07, not a plan requirement.
 const (
 	SweepEvery   = 15 * time.Minute
 	AuditEvery   = 24 * time.Hour
