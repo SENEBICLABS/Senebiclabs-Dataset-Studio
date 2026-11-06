@@ -179,8 +179,9 @@ build: toolchain-check ## Build all binaries into ./bin
 .PHONY: test-integration
 test-integration: build ## Integration + e2e tests (needs `make up`)
 	@$(COMPOSE) ps --status running --services 2>/dev/null | grep -qx postgres || { echo "error: local PostgreSQL is not running; run 'make up' first" >&2; exit 1; }
-	@echo "STUDIO_BIN_DIR=$(BIN_DIR) STUDIO_EXPECT_COMMIT=$(COMMIT) STUDIO_TEST_DATABASE_URL=<redacted> STUDIO_DB_*_PASSWORD=<redacted> $(GO) test -race -count=1 -tags integration ./..."
+	@echo "STUDIO_BIN_DIR=$(BIN_DIR) STUDIO_EXPECT_COMMIT=$(COMMIT) STUDIO_PG_CONTAINER=<compose postgres> STUDIO_TEST_DATABASE_URL=<redacted> STUDIO_DB_*_PASSWORD=<redacted> $(GO) test -race -count=1 -tags integration ./..."
 	@STUDIO_BIN_DIR='$(BIN_DIR)' STUDIO_EXPECT_COMMIT='$(COMMIT)' STUDIO_TEST_DATABASE_URL='$(STUDIO_TEST_DATABASE_URL)' \
+	  STUDIO_PG_CONTAINER="$$($(COMPOSE) ps -q postgres)" \
 	  $(DB_PASSWORD_ENV) $(GO) test -race -count=1 -tags integration ./...
 
 .PHONY: check

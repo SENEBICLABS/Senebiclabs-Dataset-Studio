@@ -54,3 +54,30 @@ func TestUnknownCommand(t *testing.T) {
 		t.Errorf("no-args exit = %d", code)
 	}
 }
+
+func TestBackupCommandsUsageAndEnvironment(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	for _, args := range [][]string{{"backup"}, {"restore"}, {"verify"}, {"backup", "a", "b"}} {
+		var out, errb strings.Builder
+		if code := run(t.Context(), args, none, &out, &errb); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+	var out, errb strings.Builder
+	if code := run(t.Context(), []string{"backup", t.TempDir()}, none, &out, &errb); code != 1 || !strings.Contains(errb.String(), "STUDIO_BACKUP_DATABASE_URL") {
+		t.Errorf("backup without env: exit %d, %q", code, errb.String())
+	}
+	errb.Reset()
+	if code := run(t.Context(), []string{"restore", t.TempDir()}, none, &out, &errb); code != 1 {
+		t.Errorf("restore without env: exit %d", code)
+	}
+	for _, key := range []string{"STUDIO_BOOTSTRAP_DATABASE_URL", "STUDIO_MIGRATOR_DATABASE_URL", "STUDIO_BACKUP_DATABASE_URL", "STUDIO_DATABASE_URL", "STUDIO_BLOB_ROOT", "STUDIO_PG_CONTAINER"} {
+		if !strings.Contains(errb.String(), key) {
+			t.Errorf("restore error does not name %s", key)
+		}
+	}
+	errb.Reset()
+	if code := run(t.Context(), []string{"verify", t.TempDir()}, none, &out, &errb); code != 1 || !strings.Contains(errb.String(), "incomplete") {
+		t.Errorf("verify of an empty dir: exit %d, %q", code, errb.String())
+	}
+}
