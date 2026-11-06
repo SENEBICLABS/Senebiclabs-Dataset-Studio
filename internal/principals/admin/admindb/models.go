@@ -143,6 +143,37 @@ type StudioAuditEvent struct {
 	DetailsVersion        int32
 }
 
+type StudioBlobHealthEvent struct {
+	ID           uuid.UUID
+	BlobObjectID uuid.UUID
+	Kind         string
+	DetectedAt   time.Time
+	Details      []byte
+	CreatedAt    time.Time
+	CreatedBy    uuid.UUID
+}
+
+type StudioBlobObject struct {
+	ID        uuid.UUID
+	Sha256    []byte
+	SizeBytes int64
+	MediaType string
+	CreatedAt time.Time
+	CreatedBy uuid.UUID
+}
+
+type StudioBlobUpload struct {
+	ID         uuid.UUID
+	State      string
+	StagingKey string
+	Sha256     []byte
+	Size       *int64
+	ExpiresAt  time.Time
+	PromotedAt *time.Time
+	CreatedAt  time.Time
+	CreatedBy  uuid.UUID
+}
+
 type StudioIdempotencyKey struct {
 	PrincipalID    uuid.UUID
 	Key            string

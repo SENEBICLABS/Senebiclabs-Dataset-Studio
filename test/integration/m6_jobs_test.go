@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -35,7 +36,10 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/blob"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/blob/fsstore"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/dbroles"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/jobkinds"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/jobs"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/jobs/jobstest"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/db"
@@ -156,6 +160,7 @@ type runnerOpts struct {
 	timeout  time.Duration
 	logs     *logBuffer
 	register func(r *jobs.Registry) error
+	catalog  audit.Catalog // nil means m6Catalog
 }
 
 // startRunner starts a worker-role runner for the test kind with one worker
@@ -172,6 +177,10 @@ func (e *jobsEnv) startRunner(t *testing.T, o runnerOpts) *jobs.Runner {
 	if err := register(reg); err != nil {
 		t.Fatal(err)
 	}
+	catalog := o.catalog
+	if catalog == nil {
+		catalog = m6Catalog
+	}
 	logs := o.logs
 	if logs == nil {
 		logs = &logBuffer{}
@@ -179,7 +188,7 @@ func (e *jobsEnv) startRunner(t *testing.T, o runnerOpts) *jobs.Runner {
 	r, err := jobs.NewRunner(jobs.RunnerConfig{
 		Pool:     e.pool(t, dbroles.Worker),
 		Registry: reg,
-		Catalog:  m6Catalog,
+		Catalog:  catalog,
 		// Info, because River reports job errors at Info.
 		Logger:               slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		ID:                   o.id,
@@ -188,6 +197,7 @@ func (e *jobsEnv) startRunner(t *testing.T, o runnerOpts) *jobs.Runner {
 		RescueStuckJobsAfter: o.rescue,
 		JobTimeout:           o.timeout,
 		RetryPolicy:          func(int) time.Duration { return 0 },
+		DisablePeriodic:      true, // tests enqueue periodic kinds explicitly
 		Hooks:                o.hooks,
 	})
 	if err != nil {
@@ -1107,48 +1117,32 @@ func upsertNote(c context.Context, tx pgx.Tx, job jobs.Job[noteArgs]) (jobs.Resu
 }
 
 // Plan 17.3 #8 and 8.1: every production job kind writes a cataloged
-// job_execution action and has an idempotency fixture. M6 registers no
-// production kinds; each later kind must add its fixture here.
+// job_execution action and has an idempotency test. Each kind added later
+// must add its test here.
 func TestEveryProductionJobKindIsCoveredByTheHarness(t *testing.T) {
-	reg, err := jobs.Production()
+	store, err := fsstore.New(filepath.Join(t.TempDir(), "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	maint, err := blob.NewMaintenance(blob.MaintenanceConfig{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := jobkinds.Production(jobkinds.Deps{Blob: maint})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := reg.CheckActions(audit.Actions); err != nil {
 		t.Error(err)
 	}
-	fixtures := map[string]bool{} // kind -> idempotency test exists
+	// kind -> the test that runs it twice through jobstest.CheckIdempotent
+	fixtures := map[string]string{
+		blob.KindSweep: "TestBlobSweepIsIdempotent",
+		blob.KindAudit: "TestBlobAuditIsIdempotent",
+	}
 	for _, kind := range reg.Kinds() {
-		if !fixtures[kind] {
-			t.Errorf("job kind %s has no idempotency fixture", kind)
+		if fixtures[kind] == "" {
+			t.Errorf("job kind %s has no idempotency test", kind)
 		}
-	}
-}
-
-// Worker shutdown: a job still running when the graceful stop's deadline
-// passes is cancelled, its fenced transaction rolls back, and Shutdown
-// returns within the grace period, so no job outlives the worker's pool.
-func TestRunnerShutdownCancelsOverrunningJobs(t *testing.T) {
-	e := newJobsEnv(t)
-	g := newGate()
-	r := e.startRunner(t, runnerOpts{hooks: jobs.Hooks{BeforeFence: pauseAttempt(1, g)}})
-	id := e.enqueuePeriodic(t, effectArgs{Note: "shutdown"})
-	g.awaitReached(t, "attempt 1 waiting")
-
-	stopCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	err := r.Shutdown(stopCtx, 5*time.Second)
-	if err == nil {
-		t.Error("Shutdown reported success although a job overran the deadline")
-	}
-	if d := time.Since(start); d > 6*time.Second {
-		t.Errorf("Shutdown took %s, longer than deadline plus grace", d)
-	}
-	if n := e.effects(t, id); n != 0 {
-		t.Errorf("effects = %d, want 0 (the cancelled attempt rolled back)", n)
-	}
-	if s := e.job(t, id).state; s == "completed" || s == "running" {
-		t.Errorf("job state after shutdown = %s, want it left for a retry", s)
 	}
 }

@@ -164,6 +164,32 @@ var Grants = []Grant{
 	{Role: ReadOnly, Table: "river_leader", Privilege: "SELECT"},
 	{Role: ReadOnly, Table: "river_notification", Privilege: "SELECT"},
 	{Role: ReadOnly, Table: "river_migration", Privilege: "SELECT"},
+
+	// Blob store (M5, plan 6.3). studio_app, "Artifact upload: I/U
+	// blob_uploads(state, sha256, size, promoted_at); I blob_objects ON
+	// CONFLICT DO NOTHING" and "Artifact download: S blob_objects". The
+	// column SELECT on blob_uploads is what the commit's
+	// UPDATE ... WHERE id = $1 AND state = 'staging' needs to read.
+	{Role: App, Table: "blob_uploads", Privilege: "INSERT"},
+	{Role: App, Table: "blob_uploads", Privilege: "SELECT", Columns: []string{"id", "state", "staging_key"}},
+	{Role: App, Table: "blob_uploads", Privilege: "UPDATE", Columns: []string{"state", "sha256", "size", "promoted_at"}},
+	{Role: App, Table: "blob_objects", Privilege: "SELECT"},
+	{Role: App, Table: "blob_objects", Privilege: "INSERT"},
+	// /readyz fails while a blob health event exists (plan 11). The API only
+	// counts events, so it may read the id column and nothing else: not the
+	// blob, kind, details or authorship.
+	{Role: App, Table: "blob_health_events", Privilege: "SELECT", Columns: []string{"id"}},
+	// studio_worker, "blob.sweep: S/U blob_uploads(state); S blob_objects".
+	{Role: Worker, Table: "blob_uploads", Privilege: "SELECT", Columns: []string{"id", "state", "staging_key", "expires_at"}},
+	{Role: Worker, Table: "blob_uploads", Privilege: "UPDATE", Columns: []string{"state"}},
+	{Role: Worker, Table: "blob_objects", Privilege: "SELECT"},
+	// studio_worker, "blob.audit: S blob_objects; I blob_health_events" (X4,
+	// confirmed by Godwin 2026-11-07 exactly as listed; not broadened).
+	{Role: Worker, Table: "blob_health_events", Privilege: "INSERT"},
+	// studio_readonly: SELECT on non-credential tables (plan 6.1).
+	{Role: ReadOnly, Table: "blob_uploads", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "blob_objects", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "blob_health_events", Privilege: "SELECT"},
 }
 
 // riverStateInBitmask is River's one function (migration 00005).

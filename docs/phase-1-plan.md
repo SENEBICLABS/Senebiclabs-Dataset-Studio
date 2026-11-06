@@ -10,6 +10,7 @@ record into one document:
 | 2.1 | Eight targeted corrections plus a River v0.49.0 transaction-behaviour inspection | Approved in principle |
 | 2.2 | Five narrow clarifications (root principal, actor kind, job-execution audit constraints, denied-event aggregation, River fence tests) | Requested by the project owner and incorporated before M0 was authorised |
 | 2.2 amendment (X2) | Test definitions P3a–P3d, AG1–AG4 and JA1–JA9 confirmed (section 17.4.1). No constraint changes. | Confirmed by Godwin, 2026-11-05 |
+| 2.2 amendment (X4, M5) | X4 resolved: the `blob.audit` grants confirmed exactly as listed in section 6.3. Upload size cap set (section 14). No constraint changes. | Approved by Godwin, 2026-11-07 |
 | 2.2 amendment (X3, M6) | X3 resolved by inspecting the River v0.49.0 source (sections 3.3 and 12.2). M6 built before M5, an order change only (section 16.1). River's indirect modules recorded (section 3.1). No constraint changes. | X3 inspection and M6-before-M5 order approved by Godwin, 2026-11-07 |
 | Editorial addendum (non-normative) | Adds the pointer below to `docs/phase-2-plan.md`. No requirement, scope, exclusion, assumption, acceptance criterion, dependency or decision is changed. This plan remains Revision 2.2. | Approved by Godwin, 2026-11-06 |
 
@@ -482,9 +483,10 @@ unaudited reads.
 - **Migrator:** not used at runtime.
 - **Backup:** no writes.
 
-**Unresolved:** the `blob.audit` row above is inferred from its described
-effects (Rev 2.1 #7). The Rev 2.1 matrix did not list `blob.audit`
-explicitly. Confirm it during M5.
+**Resolved (X4, 2026-11-07):** the `blob.audit` row above, first inferred
+from its described effects (Rev 2.1 #7), is confirmed by Godwin exactly as
+listed, not broadened. Its health-event insert therefore uses
+`ON CONFLICT DO NOTHING` without a conflict target, which needs no SELECT.
 
 ---
 
@@ -888,6 +890,10 @@ exclusive `BACKUP_GC` lock and skips its run if a backup holds it.
 
 Committed blobs are immutable and are never deleted in Phase 1.
 
+**Assumption (M5):** the plan sets no interval for `blob.audit`; it runs
+daily. Godwin accepted this default on 2026-11-07. It remains an Assumption,
+not a plan requirement. The sweep keeps the planned 15 minutes.
+
 **Tests B1–B8:** crash injection at each point, the sweeper racing an
 uploader, the backup lock, concurrent dedupe, missing-file detection, and
 backup test C1 re-run on this protocol.
@@ -1028,7 +1034,9 @@ before M12.
 **Data protection:**
 
 - Content-hash blob keys only.
-- Uploads are streamed, size-capped and have their media type sniffed.
+- Uploads are streamed, size-capped and have their media type sniffed. The
+  cap is configurable (`STUDIO_BLOB_MAX_UPLOAD_BYTES`) with a default of
+  256 MiB (approved by Godwin, 2026-11-07).
 - Logs never contain tokens, password fields or record content.
 - Secrets come only from the environment.
 - Remote `$ref` is disabled, and CEL has a cost limit.
@@ -1392,7 +1400,7 @@ on the append-only triggers, which make any UPDATE fail the write itself.
 | X1 | Role mapping for the Rev 2 record, revision, batch, dataset-version and freeze operations (section 14) | M12 |
 | X2 | **Resolved 2026-11-05.** Definitions of tests P3a–P3d, AG1–AG4 and JA1–JA9 confirmed by Godwin; recorded in section 17.4.1. Milestone placement stays as in section 16.2 (JA tests that need real River jobs may move to M6). | — |
 | X3 | **Resolved 2026-11-07 (Verified in M6).** `JobRescueMany` is exported on River's public `riverdriver.Executor`; J4a and J4b call it directly (sections 3.3 and 12.2). | — |
-| X4 | `blob.audit` permissions (section 6.3) | M5 |
+| X4 | **Resolved 2026-11-07.** `blob.audit` permissions confirmed as listed in section 6.3. | — |
 | X5 | Whether any optional item (O3–O7, partial-success batches) enters Phase 1 | After M14 |
 | X6 | Local S3 emulator for O3 | O3 only |
 | X7 | Formal sign-off of the MPL-2.0 licence (U1) | Before any distribution |

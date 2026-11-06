@@ -278,3 +278,26 @@ func TestSessionIdleTimeoutDefaultAndOverride(t *testing.T) {
 		t.Errorf("override = %s %v", c.SessionIdleTimeout, err)
 	}
 }
+
+func TestBlobSettings(t *testing.T) {
+	c, err := Load(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BlobMaxUploadBytes != 256<<20 || c.BlobRoot != "" {
+		t.Errorf("defaults: max %d root %q", c.BlobMaxUploadBytes, c.BlobRoot)
+	}
+	c, err = Load(env(map[string]string{EnvBlobRoot: "/var/lib/studio/blobs", EnvBlobMaxUpload: "1024"}))
+	if err != nil || c.BlobRoot != "/var/lib/studio/blobs" || c.BlobMaxUploadBytes != 1024 {
+		t.Errorf("overrides: %+v, %v", c, err)
+	}
+	for _, bad := range []map[string]string{
+		{EnvBlobRoot: "relative/path"},
+		{EnvBlobMaxUpload: "0"},
+		{EnvBlobMaxUpload: "lots"},
+	} {
+		if _, err := Load(env(bad)); err == nil {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+}
