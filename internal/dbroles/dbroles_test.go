@@ -31,7 +31,7 @@ func TestValidateRejectsBadGrants(t *testing.T) {
 }
 
 func TestStatementsAreDeterministicAndRevokeFirst(t *testing.T) {
-	a, b := Statements(Grants), Statements(Grants)
+	a, b := Statements(Grants, ObjectGrants), Statements(Grants, ObjectGrants)
 	if !slices.Equal(a, b) {
 		t.Fatal("Statements is not deterministic")
 	}
@@ -51,7 +51,7 @@ func TestStatementsAreDeterministicAndRevokeFirst(t *testing.T) {
 }
 
 func TestStatementsQuoteIdentifiers(t *testing.T) {
-	s := Statements([]Grant{{Role: App, Table: `we"ird`, Privilege: "SELECT", Columns: []string{"c"}}})
+	s := Statements([]Grant{{Role: App, Table: `we"ird`, Privilege: "SELECT", Columns: []string{"c"}}}, nil)
 	last := s[len(s)-1]
 	if last != `GRANT SELECT ("c") ON "studio"."we""ird" TO "studio_app"` {
 		t.Errorf("unexpected statement: %s", last)
@@ -86,5 +86,73 @@ func TestExpectedKeysExpandColumns(t *testing.T) {
 	want := []string{"studio_app|t|SELECT|a", "studio_app|t|SELECT|b", "studio_worker|t|DELETE|"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestObjectGrantMapIsValid(t *testing.T) {
+	if err := ValidateObjects(ObjectGrants); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateObjectsRejectsBadGrants(t *testing.T) {
+	cases := map[string][]ObjectGrant{
+		"unmanaged role":   {{Role: Owner, Kind: Sequence, Name: "s", Privilege: "USAGE"}},
+		"unknown kind":     {{Role: App, Kind: "SCHEMA", Name: "s", Privilege: "USAGE"}},
+		"sequence update":  {{Role: App, Kind: Sequence, Name: "s", Privilege: "UPDATE"}},
+		"function usage":   {{Role: App, Kind: Function, Name: "f", Privilege: "USAGE"}},
+		"type execute":     {{Role: App, Kind: Type, Name: "t", Privilege: "EXECUTE"}},
+		"qualified name":   {{Role: App, Kind: Type, Name: "studio.t", Privilege: "USAGE"}},
+		"args on sequence": {{Role: App, Kind: Sequence, Name: "s", Args: "int", Privilege: "USAGE"}},
+		"duplicate": {
+			{Role: App, Kind: Type, Name: "t", Privilege: "USAGE"},
+			{Role: App, Kind: Type, Name: "t", Privilege: "USAGE"},
+		},
+	}
+	for name, g := range cases {
+		if err := ValidateObjects(g); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+	if err := Validate([]Grant{{Role: Worker, Table: "t", Privilege: "MAINTAIN", Columns: []string{"c"}}}); err == nil {
+		t.Error("column-level MAINTAIN accepted")
+	}
+}
+
+// Plan 6.3 "explicitly withheld": the API role has no DELETE on river_job
+// and no UPDATE beyond kind; only the worker may MAINTAIN it.
+func TestRiverWithheldPrivileges(t *testing.T) {
+	for _, g := range Grants {
+		if g.Table != "river_job" {
+			continue
+		}
+		switch {
+		case g.Role == App && g.Privilege == "DELETE":
+			t.Errorf("api role must not delete river_job: %+v", g)
+		case g.Role == App && g.Privilege == "UPDATE" && !slices.Equal(g.Columns, []string{"kind"}):
+			t.Errorf("api role may update only river_job.kind: %+v", g)
+		case g.Privilege == "MAINTAIN" && g.Role != Worker:
+			t.Errorf("only the worker may MAINTAIN river_job: %+v", g)
+		}
+	}
+}
+
+func TestStatementsGrantObjects(t *testing.T) {
+	s := Statements(nil, []ObjectGrant{
+		{Role: App, Kind: Function, Name: "f", Args: "bit, studio.t", Privilege: "EXECUTE"},
+		{Role: Worker, Kind: Sequence, Name: "s", Privilege: "USAGE"},
+	})
+	got := s[len(s)-2:]
+	want := []string{
+		`GRANT EXECUTE ON FUNCTION "studio"."f"(bit, studio.t) TO "studio_app"`,
+		`GRANT USAGE ON SEQUENCE "studio"."s" TO "studio_worker"`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got := ExpectedObjectKeys(ObjectGrants, Type); !slices.Equal(got, []string{
+		"studio_app|river_job_state|USAGE|", "studio_worker|river_job_state|USAGE|",
+	}) {
+		t.Errorf("type keys = %v", got)
 	}
 }

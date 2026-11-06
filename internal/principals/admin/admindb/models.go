@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type StudioActorKind string
@@ -55,6 +56,54 @@ func (ns NullStudioActorKind) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.StudioActorKind), nil
+}
+
+type StudioRiverJobState string
+
+const (
+	StudioRiverJobStateAvailable StudioRiverJobState = "available"
+	StudioRiverJobStateCancelled StudioRiverJobState = "cancelled"
+	StudioRiverJobStateCompleted StudioRiverJobState = "completed"
+	StudioRiverJobStateDiscarded StudioRiverJobState = "discarded"
+	StudioRiverJobStatePending   StudioRiverJobState = "pending"
+	StudioRiverJobStateRetryable StudioRiverJobState = "retryable"
+	StudioRiverJobStateRunning   StudioRiverJobState = "running"
+	StudioRiverJobStateScheduled StudioRiverJobState = "scheduled"
+)
+
+func (e *StudioRiverJobState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = StudioRiverJobState(s)
+	case string:
+		*e = StudioRiverJobState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for StudioRiverJobState: %T", src)
+	}
+	return nil
+}
+
+type NullStudioRiverJobState struct {
+	StudioRiverJobState StudioRiverJobState
+	Valid               bool // Valid is true if StudioRiverJobState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullStudioRiverJobState) Scan(value interface{}) error {
+	if value == nil {
+		ns.StudioRiverJobState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.StudioRiverJobState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullStudioRiverJobState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.StudioRiverJobState), nil
 }
 
 type StudioApiKey struct {
@@ -119,6 +168,55 @@ type StudioPrincipal struct {
 	Status    string
 	CreatedAt time.Time
 	CreatedBy uuid.UUID
+}
+
+type StudioRiverJob struct {
+	ID           int64
+	State        StudioRiverJobState
+	Attempt      int16
+	MaxAttempts  int16
+	AttemptedAt  *time.Time
+	CreatedAt    time.Time
+	FinalizedAt  *time.Time
+	ScheduledAt  time.Time
+	Priority     int16
+	Args         []byte
+	AttemptedBy  []string
+	Errors       [][]byte
+	Kind         string
+	Metadata     []byte
+	Queue        string
+	Tags         []string
+	UniqueKey    []byte
+	UniqueStates pgtype.Bits
+}
+
+type StudioRiverLeader struct {
+	ElectedAt time.Time
+	ExpiresAt time.Time
+	LeaderID  string
+	Name      string
+}
+
+type StudioRiverMigration struct {
+	Line      string
+	Version   int64
+	CreatedAt time.Time
+}
+
+type StudioRiverNotification struct {
+	ID        int64
+	CreatedAt time.Time
+	Payload   string
+	Topic     string
+}
+
+type StudioRiverQueue struct {
+	Name      string
+	CreatedAt time.Time
+	Metadata  []byte
+	PausedAt  *time.Time
+	UpdatedAt time.Time
 }
 
 type StudioServiceAccount struct {
