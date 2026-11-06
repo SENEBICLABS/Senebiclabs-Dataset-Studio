@@ -148,9 +148,10 @@ The plan holds the detail. This list is the minimum that always applies.
 - Prefer database locks (row locks, advisory locks) over in-process locks for
   anything that crosses transactions.
 - Shutdown follows `internal/app`: draining, then HTTP drained, then hooks.
-  Known gap M0-F4: hooks are skipped once the deadline has expired. It must be
-  fixed before or in M2
-  ([plan section 21.2](docs/phase-1-plan.md#212-findings-carried-forward-from-the-m0-review)).
+  Every hook runs, even after the shutdown deadline has expired, so a hook can
+  still do its non-blocking fallback. This was finding M0-F4
+  ([plan section 21.2](docs/phase-1-plan.md#212-findings-carried-forward-from-the-m0-review)),
+  fixed in M2; keep it that way.
 
 ### Testing
 
