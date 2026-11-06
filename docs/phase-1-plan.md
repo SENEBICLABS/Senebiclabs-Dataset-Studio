@@ -10,6 +10,7 @@ record into one document:
 | 2.1 | Eight targeted corrections plus a River v0.49.0 transaction-behaviour inspection | Approved in principle |
 | 2.2 | Five narrow clarifications (root principal, actor kind, job-execution audit constraints, denied-event aggregation, River fence tests) | Requested by the project owner and incorporated before M0 was authorised |
 | 2.2 amendment (X2) | Test definitions P3a–P3d, AG1–AG4 and JA1–JA9 confirmed (section 17.4.1). No constraint changes. | Confirmed by Godwin, 2026-11-05 |
+| 2.2 amendment (X3, M6) | X3 resolved by inspecting the River v0.49.0 source (sections 3.3 and 12.2). M6 built before M5, an order change only (section 16.1). River's indirect modules recorded (section 3.1). No constraint changes. | X3 inspection and M6-before-M5 order approved by Godwin, 2026-11-07 |
 | Editorial addendum (non-normative) | Adds the pointer below to `docs/phase-2-plan.md`. No requirement, scope, exclusion, assumption, acceptance criterion, dependency or decision is changed. This plan remains Revision 2.2. | Approved by Godwin, 2026-11-06 |
 
 > **Non-normative pointer.** Later work on dataset production is described in
@@ -156,6 +157,8 @@ pin time.
 | Indirect | `github.com/jackc/puddle/v2` | v2.2.3 | pgx's pool dependency. Raised from v2.2.2 in M1 because goose v3.29.0 requires it. |
 | Migrations | `github.com/pressly/goose/v3`, SQL files embedded in the binary, forward-only | v3.29.0 | |
 | Job queue | River `github.com/riverqueue/river` and `riverdriver/riverpgxv5` | v0.49.0 | MPL-2.0, pre-1.0. Wrapped behind `internal/jobs.Queue`. River's SQL is carried in our own goose migrations. |
+| Job queue, River's own modules | `github.com/riverqueue/river/riverdriver`, `rivershared`, `rivertype` | v0.49.0 | Released with River v0.49.0 (2026-10-05). `rivertype` is imported by `internal/jobs` and `riverdriver` by the M6 tests; `rivershared` is indirect. Added in M6. |
+| Indirect (River) | `github.com/tidwall/gjson`, `sjson`, `pretty`, `match` | v1.19.0, v1.2.5, v1.2.1, v1.2.0 | Required by River v0.49.0's go.mod. Release dates 2026-05-08, 2022-08-05, 2022-10-01, 2025-09-05, all more than two weeks before M6. Added in M6. |
 | Query generation | `github.com/sqlc-dev/sqlc`, through a `tool` directive in a separate `tools/go.mod` | v1.31.1 | Generated code is committed. |
 | JSON Schema | `github.com/santhosh-tekuri/jsonschema/v6`, draft 2020-12, remote `$ref` disabled | v6.0.3 | |
 | Rules | `cel.dev/cel-go` | v0.32.0 | The module path moved from `github.com/google/cel-go`. |
@@ -202,6 +205,17 @@ Also verified in the Rev 2.2 clarifications:
 - The rescuer's `JobRescueMany` is a plain
   `UPDATE … WHERE state = 'running' AND attempted_at < horizon`. It waits on a
   row lock held by our fence and then matches nothing.
+- **X3, verified in M6 (2026-11-07) from the v0.49.0 source.**
+  `JobRescueMany(ctx, *riverdriver.JobRescueManyParams)` is an exported
+  method of the public `riverdriver.Executor` interface
+  (`riverdriver/river_driver_interface.go`). `riverpgxv5.New(pool).GetExecutor()`
+  returns that executor. River's own rescuer (`internal/maintenance/job_rescuer.go`)
+  reaches the same method through `riverpilot.StandardPilot.JobRescueMany`,
+  which delegates to it. Its SQL (`internal/dbsqlc/river_job.sql`, query
+  `JobRescueMany`) is the plain
+  `UPDATE … WHERE state = 'running' AND attempted_at < @stuck_horizon` described
+  above. J4a and J4b therefore call it directly through the driver; the
+  copied-SQL fallback is not needed.
 - Fetching (`JobGetAvailable`) uses `FOR UPDATE SKIP LOCKED`, but only on
   `available` jobs.
 
@@ -921,9 +935,9 @@ completed, and the job would never run (R2).
 | J9 | Killing the worker before commit leads the rescuer to re-run the job, with exactly one audit event. |
 | J10 | The unique index rejects a duplicate `job_execution` audit event. |
 
-**Unresolved:** whether River's rescue query can be called directly through
-its driver (`JobRescueMany`). Verify it in M6. If it can't, the test runs the
-same SQL text copied from v0.49.0.
+**Resolved (X3, Verified in M6):** River's rescue query can be called
+directly through its driver, as `riverdriver.Executor.JobRescueMany`
+(section 3.3). J4a and J4b use it.
 
 ---
 
@@ -1079,6 +1093,10 @@ M0 ─► M1 ─► M2 ─► M3 ─► M4 ─┬──────────�
 ```
 
 M5 and M6 depend only on M1 and M2, and can run alongside M3 and M4.
+
+**Build order (approved by Godwin, 2026-11-07):** M6 is built before M5,
+because M5's `blob.sweep` and `blob.audit` are jobs and need M6's runtime.
+This changes the order only; no dependency in the diagram changes.
 
 ### 16.2 Milestone scope and outcomes
 
@@ -1373,7 +1391,7 @@ on the append-only triggers, which make any UPDATE fail the write itself.
 |---|---|---|
 | X1 | Role mapping for the Rev 2 record, revision, batch, dataset-version and freeze operations (section 14) | M12 |
 | X2 | **Resolved 2026-11-05.** Definitions of tests P3a–P3d, AG1–AG4 and JA1–JA9 confirmed by Godwin; recorded in section 17.4.1. Milestone placement stays as in section 16.2 (JA tests that need real River jobs may move to M6). | — |
-| X3 | Whether `JobRescueMany` can be called through River's driver for J4a | M6 |
+| X3 | **Resolved 2026-11-07 (Verified in M6).** `JobRescueMany` is exported on River's public `riverdriver.Executor`; J4a and J4b call it directly (sections 3.3 and 12.2). | — |
 | X4 | `blob.audit` permissions (section 6.3) | M5 |
 | X5 | Whether any optional item (O3–O7, partial-success batches) enters Phase 1 | After M14 |
 | X6 | Local S3 emulator for O3 | O3 only |

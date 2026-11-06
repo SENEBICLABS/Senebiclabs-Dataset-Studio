@@ -38,8 +38,28 @@ var ManagedRoles = []string{Migrator, App, Worker, Backup, ReadOnly}
 type Grant struct {
 	Role      string
 	Table     string   // unqualified, in Schema
-	Privilege string   // SELECT, INSERT, UPDATE or DELETE
+	Privilege string   // SELECT, INSERT, UPDATE, DELETE or MAINTAIN
 	Columns   []string // empty means table-level
+}
+
+// ObjectKind is a non-table object kind that carries grants.
+type ObjectKind string
+
+// Object kinds (M6: River's sequences, function and enum type, plan 6.3 R5
+// and R7).
+const (
+	Sequence ObjectKind = "SEQUENCE"
+	Function ObjectKind = "FUNCTION"
+	Type     ObjectKind = "TYPE"
+)
+
+// ObjectGrant is one privilege on a sequence, function or type in Schema.
+type ObjectGrant struct {
+	Role      string
+	Kind      ObjectKind
+	Name      string // unqualified
+	Args      string // functions only: the argument types, schema-qualified where needed
+	Privilege string // USAGE for sequences and types, EXECUTE for functions
 }
 
 // SchemaUsage lists the roles granted USAGE on Schema. studio_backup reads
@@ -108,6 +128,66 @@ var Grants = []Grant{
 	{Role: ReadOnly, Table: "users", Privilege: "SELECT", Columns: []string{
 		"principal_id", "kind", "email", "display_name", "global_role", "created_at", "created_by",
 	}},
+
+	// River (M6, plan 6.3). studio_app: "River insert (R5): S, I, U(kind)
+	// river_job"; the S also serves "Audit query, job list: S river_job".
+	// No DELETE and no UPDATE beyond kind ("explicitly withheld").
+	{Role: App, Table: "river_job", Privilege: "SELECT"},
+	{Role: App, Table: "river_job", Privilege: "INSERT"},
+	{Role: App, Table: "river_job", Privilege: "UPDATE", Columns: []string{"kind"}},
+	// studio_worker: "Every job (fence, R1-R3): S, U river_job" and "River
+	// client internals (R7, R8): S/I/U/D river_job, river_queue,
+	// river_leader, river_notification; S river_migration; MAINTAIN on
+	// river_job" (the reindexer).
+	{Role: Worker, Table: "river_job", Privilege: "SELECT"},
+	{Role: Worker, Table: "river_job", Privilege: "INSERT"},
+	{Role: Worker, Table: "river_job", Privilege: "UPDATE"},
+	{Role: Worker, Table: "river_job", Privilege: "DELETE"},
+	{Role: Worker, Table: "river_job", Privilege: "MAINTAIN"},
+	{Role: Worker, Table: "river_queue", Privilege: "SELECT"},
+	{Role: Worker, Table: "river_queue", Privilege: "INSERT"},
+	{Role: Worker, Table: "river_queue", Privilege: "UPDATE"},
+	{Role: Worker, Table: "river_queue", Privilege: "DELETE"},
+	{Role: Worker, Table: "river_leader", Privilege: "SELECT"},
+	{Role: Worker, Table: "river_leader", Privilege: "INSERT"},
+	{Role: Worker, Table: "river_leader", Privilege: "UPDATE"},
+	{Role: Worker, Table: "river_leader", Privilege: "DELETE"},
+	{Role: Worker, Table: "river_notification", Privilege: "SELECT"},
+	{Role: Worker, Table: "river_notification", Privilege: "INSERT"},
+	{Role: Worker, Table: "river_notification", Privilege: "UPDATE"},
+	{Role: Worker, Table: "river_notification", Privilege: "DELETE"},
+	{Role: Worker, Table: "river_migration", Privilege: "SELECT"},
+	// studio_readonly: SELECT on non-credential tables (plan 6.1). River's
+	// tables hold job arguments and errors, never credentials.
+	{Role: ReadOnly, Table: "river_job", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "river_queue", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "river_leader", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "river_notification", Privilege: "SELECT"},
+	{Role: ReadOnly, Table: "river_migration", Privilege: "SELECT"},
+}
+
+// riverStateInBitmask is River's one function (migration 00005).
+const (
+	riverStateInBitmask     = "river_job_state_in_bitmask"
+	riverStateInBitmaskArgs = "bit, studio.river_job_state"
+)
+
+// ObjectGrants is the complete privilege map for sequences, functions and
+// types. Every non-extension function and every enum or domain type in Schema
+// is revoked from PUBLIC and the managed roles before these are applied, so
+// nothing else is usable (plan 6.1: PUBLIC privileges revoked by default).
+var ObjectGrants = []ObjectGrant{
+	// studio_app, River insert (R5): USAGE river_job_id_seq; EXECUTE
+	// river_job_state_in_bitmask; USAGE type river_job_state.
+	{Role: App, Kind: Sequence, Name: "river_job_id_seq", Privilege: "USAGE"},
+	{Role: App, Kind: Function, Name: riverStateInBitmask, Args: riverStateInBitmaskArgs, Privilege: "EXECUTE"},
+	{Role: App, Kind: Type, Name: "river_job_state", Privilege: "USAGE"},
+	// studio_worker, River client internals (R7, R8): USAGE on River
+	// sequences and type; EXECUTE on River functions.
+	{Role: Worker, Kind: Sequence, Name: "river_job_id_seq", Privilege: "USAGE"},
+	{Role: Worker, Kind: Sequence, Name: "river_notification_id_seq", Privilege: "USAGE"},
+	{Role: Worker, Kind: Function, Name: riverStateInBitmask, Args: riverStateInBitmaskArgs, Privilege: "EXECUTE"},
+	{Role: Worker, Kind: Type, Name: "river_job_state", Privilege: "USAGE"},
 }
 
 // Validate reports structural problems in the map (unknown roles or
@@ -123,12 +203,12 @@ func Validate(grants []Grant) error {
 			return fmt.Errorf("grant %d: role %q is not a managed role", i, g.Role)
 		}
 		switch g.Privilege {
-		case "SELECT", "INSERT", "UPDATE", "DELETE":
+		case "SELECT", "INSERT", "UPDATE", "DELETE", "MAINTAIN":
 		default:
 			return fmt.Errorf("grant %d: privilege %q is not allowed", i, g.Privilege)
 		}
-		if g.Privilege == "DELETE" && len(g.Columns) > 0 {
-			return fmt.Errorf("grant %d: DELETE cannot be column-level", i)
+		if (g.Privilege == "DELETE" || g.Privilege == "MAINTAIN") && len(g.Columns) > 0 {
+			return fmt.Errorf("grant %d: %s cannot be column-level", i, g.Privilege)
 		}
 		if g.Table == "" || strings.Contains(g.Table, ".") {
 			return fmt.Errorf("grant %d: table must be an unqualified name", i)
@@ -141,6 +221,62 @@ func Validate(grants []Grant) error {
 		}
 	}
 	return nil
+}
+
+// ValidateObjects reports structural problems in an object grant map.
+func ValidateObjects(objs []ObjectGrant) error {
+	managed := map[string]bool{}
+	for _, r := range ManagedRoles {
+		managed[r] = true
+	}
+	seen := map[string]bool{}
+	for i, o := range objs {
+		if !managed[o.Role] {
+			return fmt.Errorf("object grant %d: role %q is not a managed role", i, o.Role)
+		}
+		if o.Name == "" || strings.Contains(o.Name, ".") {
+			return fmt.Errorf("object grant %d: name must be an unqualified name", i)
+		}
+		want := "USAGE"
+		switch o.Kind {
+		case Sequence, Type:
+			if o.Args != "" {
+				return fmt.Errorf("object grant %d: only functions take arguments", i)
+			}
+		case Function:
+			want = "EXECUTE"
+		default:
+			return fmt.Errorf("object grant %d: kind %q is not allowed", i, o.Kind)
+		}
+		if o.Privilege != want {
+			return fmt.Errorf("object grant %d: %s takes %s, not %q", i, o.Kind, want, o.Privilege)
+		}
+		k := ObjectKey(o)
+		if seen[k] {
+			return fmt.Errorf("object grant %d: duplicate privilege %s", i, k)
+		}
+		seen[k] = true
+	}
+	return nil
+}
+
+// ObjectKey is the normalised key of an object grant, "role|name|PRIVILEGE|".
+// Sequences use the same form as tables, because the drift test reads both
+// from pg_class.
+func ObjectKey(o ObjectGrant) string {
+	return fmt.Sprintf("%s|%s|%s|", o.Role, o.Name, o.Privilege)
+}
+
+// ExpectedObjectKeys returns the sorted keys of the object grants of kind.
+func ExpectedObjectKeys(objs []ObjectGrant, kind ObjectKind) []string {
+	out := []string{}
+	for _, o := range objs {
+		if o.Kind == kind {
+			out = append(out, ObjectKey(o))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Keys returns the normalised privilege keys a grant produces, in the form
@@ -169,9 +305,9 @@ func ExpectedKeys(grants []Grant) []string {
 
 func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
-// Statements returns the SQL that resets and applies the privilege map. Run it
-// in one transaction as the schema owner.
-func Statements(grants []Grant) []string {
+// Statements returns the SQL that resets and applies the privilege maps. Run
+// it in one transaction as the schema owner.
+func Statements(grants []Grant, objs []ObjectGrant) []string {
 	revokeFrom := "PUBLIC"
 	for _, r := range ManagedRoles {
 		revokeFrom += ", " + ident(r)
@@ -181,9 +317,9 @@ func Statements(grants []Grant) []string {
 		fmt.Sprintf("REVOKE ALL ON ALL TABLES IN SCHEMA %s FROM %s", ident(Schema), revokeFrom),
 		fmt.Sprintf("REVOKE ALL ON ALL SEQUENCES IN SCHEMA %s FROM %s", ident(Schema), revokeFrom),
 		fmt.Sprintf("REVOKE ALL ON SCHEMA %s FROM %s", ident(Schema), revokeFrom),
-		// Our own functions (not extension members) are never callable by
-		// PUBLIC. Extension functions (citext) keep their defaults because
-		// the citext operators depend on them.
+		// Our own functions (not extension members) are callable only as
+		// ObjectGrants says. Extension functions (citext) keep their
+		// defaults because the citext operators depend on them.
 		fmt.Sprintf(`DO $$
 DECLARE f regprocedure;
 BEGIN
@@ -193,9 +329,24 @@ BEGIN
           AND NOT EXISTS (SELECT 1 FROM pg_depend d
                           WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
     LOOP
-        EXECUTE format('REVOKE ALL ON FUNCTION %%s FROM PUBLIC', f);
+        EXECUTE format('REVOKE ALL ON FUNCTION %%s FROM %s', f);
     END LOOP;
-END $$`, quoteLiteral(Schema)),
+END $$`, quoteLiteral(Schema), strings.ReplaceAll(revokeFrom, "%", "%%")),
+		// Our own enum and domain types (not extension members, not table row
+		// types or arrays) are usable only as ObjectGrants says.
+		fmt.Sprintf(`DO $$
+DECLARE t regtype;
+BEGIN
+    FOR t IN
+        SELECT ty.oid::regtype FROM pg_type ty
+        WHERE ty.typnamespace = %s::regnamespace
+          AND ty.typtype IN ('e', 'd')
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                          WHERE d.classid = 'pg_type'::regclass AND d.objid = ty.oid AND d.deptype = 'e')
+    LOOP
+        EXECUTE format('REVOKE ALL ON TYPE %%s FROM %s', t);
+    END LOOP;
+END $$`, quoteLiteral(Schema), strings.ReplaceAll(revokeFrom, "%", "%%")),
 	}
 	for _, r := range SchemaUsage {
 		stmts = append(stmts, fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", ident(Schema), ident(r)))
@@ -211,6 +362,13 @@ END $$`, quoteLiteral(Schema)),
 		}
 		stmts = append(stmts, fmt.Sprintf("GRANT %s%s ON %s.%s TO %s",
 			g.Privilege, cols, ident(Schema), ident(g.Table), ident(g.Role)))
+	}
+	for _, o := range objs {
+		target := ident(Schema) + "." + ident(o.Name)
+		if o.Kind == Function {
+			target += "(" + o.Args + ")"
+		}
+		stmts = append(stmts, fmt.Sprintf("GRANT %s ON %s %s TO %s", o.Privilege, o.Kind, target, ident(o.Role)))
 	}
 	return stmts
 }
