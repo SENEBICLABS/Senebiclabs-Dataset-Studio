@@ -131,7 +131,10 @@ type RunnerConfig struct {
 	RescueStuckJobsAfter time.Duration // 0 means DefaultRescueStuckJobsAfter (R6)
 	FetchPollInterval    time.Duration // 0 keeps River's default
 	RetryPolicy          RetryPolicy   // nil keeps River's default
-	Hooks                Hooks
+	// DisablePeriodic stops the leader enqueueing periodic kinds; tests
+	// enqueue them explicitly instead.
+	DisablePeriodic bool
+	Hooks           Hooks
 }
 
 // Runner executes registered job kinds.
@@ -161,8 +164,13 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		concurrency = DefaultConcurrency
 	}
 	workers := river.NewWorkers()
+	var periodic []*river.PeriodicJob
 	for _, kind := range cfg.Registry.Kinds() {
-		cfg.Registry.kinds[kind].add(workers, f)
+		spec := cfg.Registry.kinds[kind]
+		spec.add(workers, f)
+		if spec.periodic != nil && !cfg.DisablePeriodic {
+			periodic = append(periodic, spec.periodic)
+		}
 	}
 	rc := &river.Config{
 		ID:                          cfg.ID,
@@ -174,6 +182,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		RescueStuckJobsAfter:        durationOr(cfg.RescueStuckJobsAfter, DefaultRescueStuckJobsAfter),
 		CompletedJobRetentionPeriod: CompletedJobRetention,
 		FetchPollInterval:           cfg.FetchPollInterval,
+		PeriodicJobs:                periodic,
 	}
 	if cfg.RetryPolicy != nil {
 		rc.RetryPolicy = retryPolicy{f: cfg.RetryPolicy}

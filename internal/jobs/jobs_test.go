@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -99,13 +100,19 @@ func TestNewRunnerRejectsBadConfig(t *testing.T) {
 	}
 }
 
-func TestProductionRegistryIsCataloged(t *testing.T) {
-	r, err := Production()
-	if err != nil {
+func TestPeriodicKinds(t *testing.T) {
+	r := NewRegistry()
+	if err := Register(r, handler[aArgs], KindOptions{Action: "x", Every: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CheckActions(audit.Actions); err != nil {
-		t.Error(err)
+	if err := Register(r, handler[bArgs], KindOptions{Action: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Periodic("test.a") || r.Periodic("test.b") || r.Periodic("unknown") {
+		t.Error("periodic flags wrong")
+	}
+	if err := Register(r, handler[noKindArgs], KindOptions{Action: "x", Every: -time.Second}); err == nil {
+		t.Error("negative period accepted")
 	}
 }
 

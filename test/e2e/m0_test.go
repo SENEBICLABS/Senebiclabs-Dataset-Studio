@@ -263,15 +263,38 @@ func TestAPIRejectsInvalidConfiguration(t *testing.T) {
 
 func TestWorkerStartsAndShutsDownGracefully(t *testing.T) {
 	db := testdb.New(t)
+	// From M5 the worker runs the blob jobs, so with a database it needs a
+	// blob root, and it starts its job runner as studio_worker.
 	p := start(t, "studio-worker",
 		"STUDIO_DATABASE_URL="+db.URL(dbroles.Worker),
-		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey)
-	p.waitForLog(t, "worker idle", 10*time.Second)
+		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey,
+		"STUDIO_BLOB_ROOT="+filepath.Join(t.TempDir(), "blobs"))
+	p.waitForLog(t, "job runner started", 15*time.Second)
 	if exit := p.stop(t, 15*time.Second); exit != 0 {
 		t.Fatalf("exit code %d", exit)
 	}
 	if !strings.Contains(p.logs.String(), `"msg":"shutdown complete"`) {
 		t.Error("worker did not log shutdown complete")
+	}
+}
+
+// Without a database the worker stays idle, as in M0; with one but no blob
+// root it refuses to start (exit 2, invalid configuration).
+func TestWorkerIdleWithoutDatabaseAndRefusesWithoutBlobRoot(t *testing.T) {
+	p := start(t, "studio-worker")
+	p.waitForLog(t, "worker idle", 10*time.Second)
+	if exit := p.stop(t, 15*time.Second); exit != 0 {
+		t.Fatalf("idle worker exit code %d", exit)
+	}
+	db := testdb.New(t)
+	q := start(t, "studio-worker",
+		"STUDIO_DATABASE_URL="+db.URL(dbroles.Worker),
+		"STUDIO_AUDIT_HMAC_KEY="+e2eHMACKey)
+	if exit := q.wait(t, 15*time.Second); exit != 2 {
+		t.Errorf("worker without a blob root exited %d, want 2", exit)
+	}
+	if !strings.Contains(q.logs.String(), "STUDIO_BLOB_ROOT") {
+		t.Error("error does not name STUDIO_BLOB_ROOT")
 	}
 }
 

@@ -47,6 +47,12 @@ var Actions = Catalog{
 	ActionUserRead:           {Class: Security, DetailsVersion: 1},
 	ActionServiceAccountList: {Class: Security, DetailsVersion: 1},
 	ActionAPIKeyList:         {Class: Security, DetailsVersion: 1},
+
+	// Blob store jobs (M5, plan 8.1 and 11): one blob.pending_swept event per
+	// sweep, one blob.audited event per audit run. Details structs are
+	// blob.SweepDetails and blob.AuditDetails.
+	ActionBlobPendingSwept: {Class: JobExecution, DetailsVersion: 1},
+	ActionBlobAudited:      {Class: JobExecution, DetailsVersion: 1},
 }
 
 // Action names.
@@ -68,6 +74,8 @@ const (
 	ActionUserRead              = "user.read"
 	ActionServiceAccountList    = "service_account.list"
 	ActionAPIKeyList            = "auth.api_key_list" //nolint:gosec // G101: an audit action name, not a credential.
+	ActionBlobPendingSwept      = "blob.pending_swept"
+	ActionBlobAudited           = "blob.audited"
 )
 
 // DeniedDetails is the details struct of every denied event, version 1. The

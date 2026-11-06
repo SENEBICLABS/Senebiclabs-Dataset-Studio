@@ -128,11 +128,16 @@ type KindOptions struct {
 	Action string
 	// Timeout overrides the runner's job timeout for this kind (0 keeps it).
 	Timeout time.Duration
+	// Every, when positive, makes the kind periodic: the elected leader
+	// enqueues it with zero arguments and no origin at this interval, so its
+	// audit events are periodic (plan 8.2).
+	Every time.Duration
 }
 
 type kindSpec struct {
-	action string
-	add    func(w *river.Workers, f *fence)
+	action   string
+	add      func(w *river.Workers, f *fence)
+	periodic *river.PeriodicJob
 }
 
 // Registry declares job kinds. It is a plain description; a Runner turns it
@@ -159,17 +164,31 @@ func Register[A Args](r *Registry, h HandlerFunc[A], opts KindOptions) error {
 		return fmt.Errorf("jobs: kind %s has no audit action", kind)
 	case opts.Timeout < 0:
 		return fmt.Errorf("jobs: kind %s has a negative timeout", kind)
+	case opts.Every < 0:
+		return fmt.Errorf("jobs: kind %s has a negative period", kind)
 	}
 	if _, dup := r.kinds[kind]; dup {
 		return fmt.Errorf("jobs: kind %s is registered twice", kind)
 	}
-	r.kinds[kind] = kindSpec{
+	spec := kindSpec{
 		action: opts.Action,
 		add: func(w *river.Workers, f *fence) {
 			river.AddWorker(w, &riverWorker[A]{fence: f, handler: h, action: opts.Action, timeout: opts.Timeout})
 		},
 	}
+	if opts.Every > 0 {
+		spec.periodic = river.NewPeriodicJob(river.PeriodicInterval(opts.Every),
+			func() (river.JobArgs, *river.InsertOpts) { return zero, &river.InsertOpts{Queue: DefaultQueue} },
+			&river.PeriodicJobOpts{ID: kind})
+	}
+	r.kinds[kind] = spec
 	return nil
+}
+
+// Periodic reports whether a registered kind is periodic.
+func (r *Registry) Periodic(kind string) bool {
+	s, ok := r.kinds[kind]
+	return ok && s.periodic != nil
 }
 
 // Kinds returns the registered kinds, sorted.
@@ -203,12 +222,4 @@ func (r *Registry) CheckActions(catalog audit.Catalog) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// Production returns the job kinds studio-worker runs. M6 provides the
-// runtime only; kinds arrive with the milestones that need them (M5's blob
-// jobs first). The cross-cutting idempotency and audit-completeness tests
-// iterate over this registry (plan 17.3 #2 and #8).
-func Production() (*Registry, error) {
-	return NewRegistry(), nil
 }

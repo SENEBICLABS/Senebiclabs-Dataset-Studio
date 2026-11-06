@@ -19,6 +19,7 @@ import (
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/api"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/app"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/audit"
+	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/blob"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/config"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/db"
 	"github.com/SENEBICLABS/Senebiclabs-Dataset-Studio/internal/platform/health"
@@ -62,7 +63,7 @@ func run(ctx context.Context, lookup config.Lookup, logOut io.Writer) int {
 			return 1
 		}
 		lc.OnShutdown("database pool", func(context.Context) error { pool.Close(); return nil })
-		checks = append(checks, db.PingChecker{Pool: pool})
+		checks = append(checks, db.PingChecker{Pool: pool}, blob.HealthChecker{Pool: pool})
 
 		// Denied and failed events are aggregated in memory and flushed per
 		// window (plan 8.3). Registered after the pool, so its hook runs

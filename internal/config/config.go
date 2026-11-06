@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,13 @@ const (
 	EnvIdleTimeout       = "STUDIO_HTTP_IDLE_TIMEOUT"
 	EnvSessionIdle       = "STUDIO_SESSION_IDLE_TIMEOUT"
 	EnvAuditHMACKey      = "STUDIO_AUDIT_HMAC_KEY"
+	EnvBlobRoot          = "STUDIO_BLOB_ROOT"
+	EnvBlobMaxUpload     = "STUDIO_BLOB_MAX_UPLOAD_BYTES"
 )
+
+// DefaultBlobMaxUploadBytes is the default upload size cap, 256 MiB (approved
+// by Godwin for M5, 2026-11-07; plan 14: uploads are size-capped).
+const DefaultBlobMaxUploadBytes int64 = 256 << 20
 
 // MinAuditHMACKeyLength is the minimum length of STUDIO_AUDIT_HMAC_KEY.
 const MinAuditHMACKeyLength = 32
@@ -57,6 +64,12 @@ type Config struct {
 	// whenever DatabaseURL is set, because the API then serves login.
 	AuditHMACKey string
 
+	// BlobRoot is the absolute directory of the filesystem blob store (plan
+	// 11). Required by studio-worker whenever DatabaseURL is set.
+	BlobRoot string
+	// BlobMaxUploadBytes caps a single upload.
+	BlobMaxUploadBytes int64
+
 	HTTP HTTP
 }
 
@@ -77,6 +90,7 @@ func Defaults() Config {
 		ShutdownTimeout:    20 * time.Second,
 		ReadinessTimeout:   2 * time.Second,
 		SessionIdleTimeout: 30 * time.Minute,
+		BlobMaxUploadBytes: DefaultBlobMaxUploadBytes,
 		HTTP: HTTP{
 			Addr:              "127.0.0.1:8480",
 			ReadHeaderTimeout: 5 * time.Second,
@@ -126,6 +140,18 @@ func Load(lookup Lookup) (Config, error) {
 	dur(EnvWriteTimeout, &c.HTTP.WriteTimeout)
 	dur(EnvIdleTimeout, &c.HTTP.IdleTimeout)
 	dur(EnvSessionIdle, &c.SessionIdleTimeout)
+	str(EnvBlobRoot, &c.BlobRoot)
+	if v, ok := lookup(EnvBlobMaxUpload); ok {
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil || n <= 0 {
+			errs = append(errs, fmt.Errorf("%s: must be a positive number of bytes, got %q", EnvBlobMaxUpload, v))
+		} else {
+			c.BlobMaxUploadBytes = n
+		}
+	}
+	if c.BlobRoot != "" && !filepath.IsAbs(c.BlobRoot) {
+		errs = append(errs, fmt.Errorf("%s: must be an absolute path", EnvBlobRoot))
+	}
 	if v, ok := lookup(EnvAuditHMACKey); ok {
 		c.AuditHMACKey = v // used verbatim; never trimmed, logged or echoed
 	}
@@ -283,5 +309,7 @@ func (c Config) Summary() map[string]string {
 		"readiness_timeout": c.ReadinessTimeout.String(),
 		"session_idle":      c.SessionIdleTimeout.String(),
 		"audit_hmac_key":    map[bool]string{true: "(set)", false: "(not set)"}[c.AuditHMACKey != ""],
+		"blob_root":         map[bool]string{true: c.BlobRoot, false: "(not configured)"}[c.BlobRoot != ""],
+		"blob_max_upload":   strconv.FormatInt(c.BlobMaxUploadBytes, 10),
 	}
 }
