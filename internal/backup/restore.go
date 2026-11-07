@@ -30,7 +30,7 @@ type RestoreConfig struct {
 	BootstrapURL string // superuser, maintenance database: creates the empty target (step 2)
 	MigratorURL  string // pg_restore and grants (steps 3, 4)
 	BackupURL    string // verify-restore reads (step 5)
-	AppURL       string // verify-restore's write step and system.restored (steps 5, 6)
+	AppURL       string // the system.restored event (step 6)
 	BlobRoot     string // the target blob root; must not exist or be empty
 	Tools        Tools
 	OSUser       string // recorded in system.restored (plan 7.2)
@@ -184,10 +184,10 @@ func Restore(ctx context.Context, cfg RestoreConfig) (Result, error) {
 // the same row counts, the same schema version and installation, exactly the
 // manifest's blobs, and every blob present with the right hash. A missing or
 // corrupt blob fails verification, naming each one, so the restore stops
-// before its system.restored event. It does not write blob_health_events:
-// the plan's grant matrix (6.3) gives no role used by restore INSERT on that
-// table; blob.audit (worker) records such damage on its next run. Registry
-// and release-manifest hashes have no tables before M8/M13.
+// before its system.restored event. verify-restore is read-only (plan 6.2,
+// 11, 13): it writes nothing, including blob_health_events, which blob.audit
+// (worker) records on its next run. Registry and release-manifest hashes
+// have no tables before M8/M13.
 func VerifyRestore(ctx context.Context, m Manifest, backupURL string, store blob.Store) error {
 	db, err := pgx.Connect(ctx, backupURL)
 	if err != nil {

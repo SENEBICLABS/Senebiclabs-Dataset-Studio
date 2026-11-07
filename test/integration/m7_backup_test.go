@@ -497,8 +497,8 @@ func TestC10ReferenceToMissingBlobRejected(t *testing.T) {
 }
 
 // verify-restore detects a restored blob that is missing and fails, naming
-// it. It writes no health event: no role used by restore holds INSERT on
-// blob_health_events in the plan's matrix (6.3); blob.audit records it.
+// it. It is read-only (plan 6.2, 11, 13): it writes no health event;
+// blob.audit records it.
 func TestVerifyRestoreDetectsMissingBlobs(t *testing.T) {
 	e := newBlobEnv(t)
 	e.seed(t)
