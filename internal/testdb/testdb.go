@@ -255,3 +255,21 @@ func dropDatabase(ctx context.Context, name string) error {
 		return err
 	})
 }
+
+// ReserveName returns a fresh database name that does not exist yet, for a
+// restore target (M7). Whatever is created under it is dropped when the test
+// ends.
+func ReserveName(t testing.TB) string {
+	t.Helper()
+	ready(t)
+	name := uniqueName("studio_r")
+	t.Cleanup(func() { drop(t, name) })
+	return name
+}
+
+// URLForDatabase returns a connection URL for database as role.
+func URLForDatabase(t testing.TB, role, database string) string {
+	t.Helper()
+	ready(t)
+	return h.urlFor(role, database)
+}

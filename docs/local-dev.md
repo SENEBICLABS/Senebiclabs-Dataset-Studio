@@ -185,10 +185,45 @@ printed, whether they appear in the URL's userinfo or as `password` or
 | | 2 | Invalid configuration (`STUDIO_*` variables). |
 | `studioctl config check` | 0 | Configuration valid; effective settings printed with secrets redacted. |
 | | 1 | Configuration invalid; every problem listed on stderr. |
-| `studioctl db bootstrap`, `studioctl migrate [up\|status]`, `studioctl create-admin` | 0 | Success. |
+| `studioctl db bootstrap`, `studioctl migrate [up\|status]`, `studioctl create-admin`, `studioctl backup`, `studioctl verify`, `studioctl restore` | 0 | Success. |
 | | 1 | Missing or invalid settings, connection failure, or a failed step. |
 | `studioctl version`, `studioctl help` | 0 | Success. `version` exits 1 only if writing its output fails. |
 | `studioctl` (no command, unknown command, bad arguments) | 2 | Usage error; usage printed on stderr. |
+
+## Backup and restore (M7)
+
+`studioctl backup`, `verify` and `restore` follow plan section 13. The
+PostgreSQL tools always run inside the compose container (PostgreSQL 18); the
+host's `pg_dump` is never used, and any tool other than version 18 is refused.
+
+```sh
+export STUDIO_PG_CONTAINER="$(docker compose --env-file .env -f deploy/compose.yaml ps -q postgres)"
+export STUDIO_BLOB_ROOT=/absolute/path/to/blobs
+
+# As studio_backup. Holds BACKUP_GC shared (blob.sweep skips meanwhile), dumps
+# one exported snapshot, copies and re-hashes every listed blob, and writes
+# manifest.json and then COMPLETE. A failed backup has no COMPLETE.
+STUDIO_BACKUP_DATABASE_URL='postgres://studio_backup:<pw>@127.0.0.1:55432/studio?sslmode=disable' \
+  bin/studioctl backup /absolute/path/to/new-backup-dir
+
+# Integrity only (no database): COMPLETE, manifest, dump and blob hashes.
+bin/studioctl verify /absolute/path/to/new-backup-dir
+
+# Into a new or empty database and an empty blob root. Every URL except the
+# bootstrap one names the target database. Every hash and the target are
+# checked before anything is touched; then pg_restore as studio_migrator,
+# grants, blobs (verified), verify-restore, and one system.restored event.
+STUDIO_BOOTSTRAP_DATABASE_URL='postgres://studio_bootstrap:<pw>@127.0.0.1:55432/postgres?sslmode=disable' \
+STUDIO_MIGRATOR_DATABASE_URL='postgres://studio_migrator:<pw>@127.0.0.1:55432/studio_restored?sslmode=disable' \
+STUDIO_BACKUP_DATABASE_URL='postgres://studio_backup:<pw>@127.0.0.1:55432/studio_restored?sslmode=disable' \
+STUDIO_DATABASE_URL='postgres://studio_app:<pw>@127.0.0.1:55432/studio_restored?sslmode=disable' \
+STUDIO_BLOB_ROOT=/absolute/path/to/restored-blobs \
+  bin/studioctl restore /absolute/path/to/new-backup-dir
+```
+
+Restore refuses an incomplete or altered backup, a backup from a newer schema
+than the build, and a non-empty target database or blob root. Passwords reach
+the container tools only through the environment, never as arguments.
 
 ## Tests
 

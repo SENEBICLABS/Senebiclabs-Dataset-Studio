@@ -53,6 +53,10 @@ var Actions = Catalog{
 	// blob.SweepDetails and blob.AuditDetails.
 	ActionBlobPendingSwept: {Class: JobExecution, DetailsVersion: 1},
 	ActionBlobAudited:      {Class: JobExecution, DetailsVersion: 1},
+
+	// Restore (M7, plan 8.1 and 13): one event after verification, written by
+	// studioctl as system:cli.
+	ActionSystemRestored: {Class: Command, DetailsVersion: 1},
 }
 
 // Action names.
@@ -76,7 +80,20 @@ const (
 	ActionAPIKeyList            = "auth.api_key_list" //nolint:gosec // G101: an audit action name, not a credential.
 	ActionBlobPendingSwept      = "blob.pending_swept"
 	ActionBlobAudited           = "blob.audited"
+	ActionSystemRestored        = "system.restored"
 )
+
+// SystemRestoredDetails is the details struct of system.restored, version 1.
+// OSUser and Hostname identify the operator (plan 7.2).
+type SystemRestoredDetails struct {
+	BackupCreatedAt string `json:"backup_created_at"`
+	ManifestSHA256  string `json:"manifest_sha256"`
+	InstallationID  string `json:"installation_id"`
+	GooseVersion    int64  `json:"goose_version"`
+	Blobs           int    `json:"blobs"`
+	OSUser          string `json:"os_user,omitempty"`
+	Hostname        string `json:"hostname,omitempty"`
+}
 
 // DeniedDetails is the details struct of every denied event, version 1. The
 // aggregator adds repeat_count, first_seen and last_seen (plan 8.3).

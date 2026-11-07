@@ -117,6 +117,18 @@ func LatestVersion() (int64, error) {
 	return latest, nil
 }
 
+// ReapplyGrants applies the privilege map, and nothing else, as the migrator
+// acting as studio_owner. Restore uses it after pg_restore (plan 13, step 4):
+// a restore re-applies grants but never runs migrations.
+func ReapplyGrants(ctx context.Context, migratorURL string) error {
+	db, err := open(migratorURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return ApplyGrants(ctx, db)
+}
+
 // ApplyGrants resets and applies the privilege map in one transaction. db must
 // be acting as studio_owner.
 func ApplyGrants(ctx context.Context, db *sql.DB) error {

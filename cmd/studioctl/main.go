@@ -1,13 +1,13 @@
 // Command studioctl is the operator CLI.
 //
 // Subcommands: version, config check (M0); db bootstrap, migrate (M1);
-// create-admin (M3).
-// Backup and restore subcommands arrive with their milestones.
+// create-admin (M3); backup, verify and restore (M7).
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +35,17 @@ Usage:
                              as studio_app: create a platform administrator;
                              the password is read from stdin (needs
                              STUDIO_DATABASE_URL)
+  studioctl backup <dir>     as studio_backup: write a consistent backup of the
+                             database and blob store to a new directory (needs
+                             STUDIO_BACKUP_DATABASE_URL, STUDIO_BLOB_ROOT and
+                             STUDIO_PG_CONTAINER, the PostgreSQL 18 container)
+  studioctl verify <dir>     check a backup's hashes without touching a database
+  studioctl restore <dir>    restore a verified backup into a new or empty
+                             database and blob root, then verify it (needs
+                             STUDIO_BOOTSTRAP_DATABASE_URL, and
+                             STUDIO_MIGRATOR_DATABASE_URL,
+                             STUDIO_BACKUP_DATABASE_URL and STUDIO_DATABASE_URL
+                             for the target, STUDIO_BLOB_ROOT, STUDIO_PG_CONTAINER)
   studioctl help             show this help
 
 Exit codes: 0 success, 1 failure, 2 usage error.
@@ -80,6 +91,12 @@ func runWithStdin(ctx context.Context, args []string, lookup config.Lookup, stdi
 		return runMigrate(ctx, args[1:], lookup, stdout, stderr)
 	case "create-admin":
 		return runCreateAdmin(ctx, args[1:], lookup, stdin, stdout, stderr)
+	case "backup":
+		return runBackup(ctx, args[1:], lookup, stdout, stderr)
+	case "verify":
+		return runVerify(args[1:], stdout, stderr)
+	case "restore":
+		return runRestore(ctx, args[1:], lookup, stdout, stderr)
 	case "help", "-h", "--help":
 		_, _ = fmt.Fprint(stdout, usage)
 		return 0
@@ -110,3 +127,5 @@ func printSummary(w io.Writer, m map[string]string) int {
 	}
 	return 0
 }
+
+func errorsJoin(errs ...error) error { return errors.Join(errs...) }

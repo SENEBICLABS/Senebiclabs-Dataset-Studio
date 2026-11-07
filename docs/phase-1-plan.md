@@ -10,6 +10,7 @@ record into one document:
 | 2.1 | Eight targeted corrections plus a River v0.49.0 transaction-behaviour inspection | Approved in principle |
 | 2.2 | Five narrow clarifications (root principal, actor kind, job-execution audit constraints, denied-event aggregation, River fence tests) | Requested by the project owner and incorporated before M0 was authorised |
 | 2.2 amendment (X2) | Test definitions P3a–P3d, AG1–AG4 and JA1–JA9 confirmed (section 17.4.1). No constraint changes. | Confirmed by Godwin, 2026-11-05 |
+| 2.2 amendment (M7) | `verify-restore` is read-only and runs as `studio_backup`: it reports and fails on missing or corrupt blobs but does not write `blob_health_events`, which `blob.audit` records (sections 6.2, 11, 13). No grant changes. | Owner decision (a), Godwin, 2026-11-07 |
 | 2.2 amendment (X4, M5) | X4 resolved: the `blob.audit` grants confirmed exactly as listed in section 6.3. Upload size cap set (section 14). No constraint changes. | Approved by Godwin, 2026-11-07 |
 | 2.2 amendment (X3, M6) | X3 resolved by inspecting the River v0.49.0 source (sections 3.3 and 12.2). M6 built before M5, an order change only (section 16.1). River's indirect modules recorded (section 3.1). No constraint changes. | X3 inspection and M6-before-M5 order approved by Godwin, 2026-11-07 |
 | Editorial addendum (non-normative) | Adds the pointer below to `docs/phase-2-plan.md`. No requirement, scope, exclusion, assumption, acceptance criterion, dependency or decision is changed. This plan remains Revision 2.2. | Approved by Godwin, 2026-11-06 |
@@ -422,9 +423,9 @@ River's tables (R8) are carried as goose migrations at the pinned version.
 
 | Role | `studioctl` subcommands |
 |---|---|
-| app | `create-admin`, the restore marker event, the write step of `verify-restore` |
+| app | `create-admin`, the restore marker event (`system.restored`) |
 | worker | `jobs retry` (moved out of the API) |
-| backup | `backup`, verification reads |
+| backup | `backup`, `verify-restore` (read-only: it writes nothing) |
 | migrator | `migrate`, `restore` |
 
 ### 6.3 Endpoint and job permission matrix (Approved in Rev 2.1 #4)
@@ -886,7 +887,7 @@ exclusive `BACKUP_GC` lock and skips its run if a backup holds it.
 | Before transaction 1 commits | Staging files older than 24 hours with no row are deleted. |
 | During streaming | After `expires_at` (24 hours): delete the file and mark the upload `abandoned`. Write one audit event per sweep. |
 | After the rename, before transaction 2 commits | A final-path file with no row and mtime older than 24 hours is deleted only after taking the per-sha lock and re-checking for a row. A re-upload of the same content within the grace period reuses the file. |
-| Row exists but the file is missing or corrupt | Not self-healing. `blob.audit` and `verify-restore` detect it and write `blob_health_events`, and `/readyz` fails. The fix is restoring from backup. |
+| Row exists but the file is missing or corrupt | Not self-healing. `blob.audit` (worker) detects it and records it in `blob_health_events`, and `/readyz` fails while such events exist. `verify-restore` also detects it after a restore, reports each damaged blob and fails verification, but writes nothing; `blob.audit` records the damage on its next run. The fix is restoring from backup. |
 
 Committed blobs are immutable and are never deleted in Phase 1.
 
@@ -969,9 +970,13 @@ directly through its driver, as `riverdriver.Executor.JobRescueMany`
 3. Run `pg_restore --no-owner --role=studio_owner --exit-on-error
    --single-transaction` as the migrator.
 4. Re-apply grants, then copy the blobs, verifying them.
-5. Run `verify-restore`: counts, no dangling blob references, blob hashes,
-   registry hashes, and manifest hashes.
-6. Write the `system.restored` event.
+5. Run `verify-restore` as `studio_backup`, read-only: counts, no dangling
+   blob references, blob hashes, registry hashes, and manifest hashes. Any
+   mismatch, or any missing or corrupt blob, is reported and fails
+   verification; it writes nothing, including `blob_health_events`
+   (section 11), and the restore stops before step 6.
+6. Write the `system.restored` event (as `studio_app`), only after
+   verification has passed.
 
 **Tests C1–C10:**
 
